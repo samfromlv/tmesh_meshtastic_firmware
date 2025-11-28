@@ -67,23 +67,28 @@ void FloodingRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
 {
     if (!isToUs(p) && (p->hop_limit > 0) && !isFromUs(p)) {
         if (p->id != 0) {
-            if (isRebroadcaster()) {
-                meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
+            if (isRebroadcaster() 
+                &&(config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY 
+                    || (nodeDB->getMeshNode(p->from) != nullptr 
+                        && nodeDB->getMeshNode(p->from)->is_favorite))) {
+            
+                    meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
 
-                tosend->hop_limit--; // bump down the hop count
-#if USERPREFS_EVENT_MODE
-                if (tosend->hop_limit > 2) {
-                    // if we are "correcting" the hop_limit, "correct" the hop_start by the same amount to preserve hops away.
-                    tosend->hop_start -= (tosend->hop_limit - 2);
-                    tosend->hop_limit = 2;
-                }
-#endif
-                tosend->next_hop = NO_NEXT_HOP_PREFERENCE; // this should already be the case, but just in case
+                    tosend->hop_limit--; // bump down the hop count
+    #if USERPREFS_EVENT_MODE
+                    if (tosend->hop_limit > 2) {
+                        // if we are "correcting" the hop_limit, "correct" the hop_start by the same amount to preserve hops away.
+                        tosend->hop_start -= (tosend->hop_limit - 2);
+                        tosend->hop_limit = 2;
+                    }
+    #endif
+                    tosend->next_hop = NO_NEXT_HOP_PREFERENCE; // this should already be the case, but just in case
 
-                LOG_INFO("Rebroadcast received floodmsg");
-                // Note: we are careful to resend using the original senders node id
-                // We are careful not to call our hooked version of send() - because we don't want to check this again
-                Router::send(tosend);
+                    LOG_INFO("Rebroadcast received floodmsg");
+                    // Note: we are careful to resend using the original senders node id
+                    // We are careful not to call our hooked version of send() - because we don't want to check this again
+                    Router::send(tosend);
+               
             } else {
                 LOG_DEBUG("No rebroadcast: Role = CLIENT_MUTE or Rebroadcast Mode = NONE");
             }

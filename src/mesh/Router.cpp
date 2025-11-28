@@ -336,11 +336,11 @@ DecodeState perhapsDecode(meshtastic_MeshPacket *p)
         config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_ALL_SKIP_DECODING)
         return DecodeState::DECODE_FAILURE;
 
-    if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
-        (nodeDB->getMeshNode(p->from) == NULL || !nodeDB->getMeshNode(p->from)->has_user)) {
-        LOG_DEBUG("Node 0x%x not in nodeDB-> Rebroadcast mode KNOWN_ONLY will ignore packet", p->from);
-        return DecodeState::DECODE_FAILURE;
-    }
+    // if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
+    //     (nodeDB->getMeshNode(p->from) == NULL || !nodeDB->getMeshNode(p->from)->has_user)) {
+    //     LOG_DEBUG("Node 0x%x not in nodeDB-> Rebroadcast mode KNOWN_ONLY will ignore packet", p->from);
+    //     return DecodeState::DECODE_FAILURE;
+    // }
 
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag)
         return DecodeState::DECODE_SUCCESS; // If packet was already decoded just return

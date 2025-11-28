@@ -51,6 +51,25 @@ static uint8_t bytes[meshtastic_MqttClientProxyMessage_size + 30]; // 12 for cha
 
 static bool isMqttServerAddressPrivate = false;
 
+// Keep track of the last few packet IDs received via MQTT so we don't
+// immediately re-publish them back out. A simple ring buffer of size 8.
+static uint32_t recentMqttPacketIds[8] = {0};
+static uint8_t recentMqttPacketPos = 0;
+
+inline void rememberMqttPacketId(uint32_t id)
+{
+    recentMqttPacketIds[recentMqttPacketPos] = id;
+    recentMqttPacketPos = (recentMqttPacketPos + 1) % 8;
+}
+
+inline bool isRecentMqttPacketId(uint32_t id)
+{
+    for (auto v : recentMqttPacketIds) {
+        if (v == id) return true;
+    }
+    return false;
+}
+
 inline void onReceiveProto(char *topic, byte *payload, size_t length)
 {
     const DecodedServiceEnvelope e(payload, length);
@@ -80,10 +99,14 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
         return;
     }
     LOG_INFO("Received MQTT topic %s, len=%u", topic, length);
+
+       
     if (e.packet->hop_limit > HOP_MAX || e.packet->hop_start > HOP_MAX) {
         LOG_INFO("Invalid hop_limit(%u) or hop_start(%u)", e.packet->hop_limit, e.packet->hop_start);
         return;
     }
+
+    rememberMqttPacketId(e.packet->id);
 
     UniquePacketPoolPacket p = packetPool.allocUniqueZeroed();
     p->from = e.packet->from;
@@ -93,7 +116,7 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
     p->hop_limit = e.packet->hop_limit;
     p->hop_start = e.packet->hop_start;
     p->want_ack = e.packet->want_ack;
-    p->via_mqtt = true; // Mark that the packet was received via MQTT
+    //p->via_mqtt = true; // Mark that the packet was received via MQTT
     p->which_payload_variant = e.packet->which_payload_variant;
     memcpy(&p->decoded, &e.packet->decoded, std::max(sizeof(p->decoded), sizeof(p->encrypted)));
 
@@ -111,12 +134,12 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
 
     // PKI messages get accepted even if we can't decrypt
     if (router && p->which_payload_variant == meshtastic_MeshPacket_encrypted_tag && strcmp(e.channel_id, "PKI") == 0) {
-        const meshtastic_NodeInfoLite *tx = nodeDB->getMeshNode(getFrom(p.get()));
-        const meshtastic_NodeInfoLite *rx = nodeDB->getMeshNode(p->to);
+        //const meshtastic_NodeInfoLite *tx = nodeDB->getMeshNode(getFrom(p.get()));
+        //const meshtastic_NodeInfoLite *rx = nodeDB->getMeshNode(p->to);
         // Only accept PKI messages to us, or if we have both the sender and receiver in our nodeDB, as then it's
         // likely they discovered each other via a channel we have downlink enabled for
-        if (isToUs(p.get()) || (tx && tx->has_user && rx && rx->has_user))
-            router->enqueueReceivedMessage(p.release());
+        //if (isToUs(p.get()) || (tx && tx->has_user && rx && rx->has_user))
+        router->enqueueReceivedMessage(p.release());
     } else if (router &&
                perhapsDecode(p.get()) == DecodeState::DECODE_SUCCESS) // ignore messages if we don't have the channel key
         router->enqueueReceivedMessage(p.release());
@@ -682,8 +705,12 @@ void MQTT::publishQueuedMessages()
 
 void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_MeshPacket &mp_decoded, ChannelIndex chIndex)
 {
-    if (mp_encrypted.via_mqtt)
+    // Skip publish if this packet originated from MQTT (via_mqtt) or its ID matches
+    // one of the recently received MQTT packet IDs.
+    if (isRecentMqttPacketId(mp_encrypted.id)) {
+        LOG_DEBUG("MQTT onSend - Skip publish for recent id=%u", mp_encrypted.id);
         return; // Don't send messages that came from MQTT back into MQTT
+    }
     bool uplinkEnabled = false;
     for (int i = 0; i <= 7; i++) {
         if (channels.getByIndex(i).settings.uplink_enabled)
@@ -696,7 +723,8 @@ void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_Me
     // mp_decoded will not be decoded when it's PKI encrypted and not directed to us
     if (mp_decoded.which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
         // For uplinking other's packets, check if it's not OK to MQTT or if it's an older packet without the bitfield
-        bool dontUplink = !mp_decoded.decoded.has_bitfield || !(mp_decoded.decoded.bitfield & BITFIELD_OK_TO_MQTT_MASK);
+        bool dontUplink = false; 
+        // /*!mp_decoded.decoded.has_bitfield || !(mp_decoded.decoded.bitfield & BITFIELD_OK_TO_MQTT_MASK);*/
         // check for the lowest bit of the data bitfield set false, and the use of one of the default keys.
         if (!isFromUs(&mp_decoded) && !isMqttServerAddressPrivate && dontUplink &&
             (ch.settings.psk.size < 2 || (ch.settings.psk.size == 16 && memcmp(ch.settings.psk.bytes, defaultpsk, 16)) ||
