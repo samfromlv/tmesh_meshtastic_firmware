@@ -129,7 +129,9 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
 {
     if (!isToUs(p) && !isFromUs(p) && p->hop_limit > 0) {
         if (p->id != 0) {
-            if (isRebroadcaster()) {
+            if (isRebroadcaster() && (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY
+                   || (nodeDB->getMeshNode(p->from) != nullptr
+                       && nodeDB->getMeshNode(p->from)->is_favorite))) {
                 if (p->next_hop == NO_NEXT_HOP_PREFERENCE || p->next_hop == nodeDB->getLastByteOfNodeNum(getNodeNum())) {
                     meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
                     LOG_INFO("Rebroadcast received message coming from %x", p->relay_node);
