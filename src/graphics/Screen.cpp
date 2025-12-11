@@ -2048,6 +2048,9 @@ bool shouldWakeOnReceivedMessage()
     - If role is not CLIENT / CLIENT_MUTE / CLIENT_HIDDEN / CLIENT_BASE
     - If the battery level is very low
     */
+    if (config.display.screen_on_secs == 30)
+        return false;
+
     if (moduleConfig.external_notification.enabled) {
         return false;
     }
