@@ -19,14 +19,16 @@
 int32_t DeviceTelemetryModule::runOnce()
 {
     refreshUptime();
-    bool isImpoliteRole =
-        IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_SENSOR, meshtastic_Config_DeviceConfig_Role_ROUTER);
+    // bool isImpoliteRole =
+    //   IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_SENSOR, meshtastic_Config_DeviceConfig_Role_ROUTER);
     if (((lastSentToMesh == 0) ||
          ((uptimeLastMs - lastSentToMesh) >=
-          Default::getConfiguredOrDefaultMsScaled(moduleConfig.telemetry.device_update_interval,
-                                                  default_telemetry_broadcast_interval_secs, numOnlineNodes))) &&
-        airTime->isTxAllowedChannelUtil(!isImpoliteRole) && airTime->isTxAllowedAirUtil() &&
-        config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN &&
+          // Default::getConfiguredOrDefaultMsScaled(moduleConfig.telemetry.device_update_interval,
+          //                                       default_telemetry_broadcast_interval_secs, numOnlineNodes)
+          tmesh_telemetry_broadcast_interval_ms))
+        // airTime->isTxAllowedChannelUtil(!isImpoliteRole)
+        //   && airTime->isTxAllowedAirUtil()
+        && config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN &&
         moduleConfig.telemetry.device_telemetry_enabled) {
         sendTelemetry();
         lastSentToMesh = uptimeLastMs;
@@ -177,6 +179,7 @@ bool DeviceTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
     p->to = dest;
     p->decoded.want_response = false;
     p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    p->hop_limit = 0; // Don't let this be rebroadcast by other nodes, only send to neighbors and mqtt
 
     nodeDB->updateTelemetry(nodeDB->getNodeNum(), telemetry, RX_SRC_LOCAL);
     if (phoneOnly) {
