@@ -336,6 +336,9 @@ struct PubSubConfig {
             serverPort = 8883;
         }
         std::tie(serverAddr, serverPort) = parseHostAndPort(serverAddr.c_str(), serverPort);
+        if (*config.address && isTmeshServer(serverAddr) && strlen(config.password) > 3) {
+            mqttPassword = config.password + 3;
+        }
     }
 
     // Defaults
