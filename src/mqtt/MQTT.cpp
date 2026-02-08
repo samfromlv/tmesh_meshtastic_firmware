@@ -344,6 +344,9 @@ struct PubSubConfig {
         auto [parsedServerAddr, parsedServerPort] = parseHostAndPort(serverAddr.c_str(), serverPort);
         serverAddr = std::move(parsedServerAddr);
         serverPort = parsedServerPort;
+        if (*config.address && isTmeshServer(serverAddr) && strlen(config.password) > 3) {
+            mqttPassword = config.password + 3;
+        }
     }
 
     // Defaults
