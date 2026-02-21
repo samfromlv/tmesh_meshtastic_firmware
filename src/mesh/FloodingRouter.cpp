@@ -67,7 +67,9 @@ bool FloodingRouter::shouldFilterReceived(const meshtastic_MeshPacket *p)
 bool FloodingRouter::perhapsHandleUpgradedPacket(const meshtastic_MeshPacket *p)
 {
     // isRebroadcaster() is duplicated in perhapsRebroadcast(), but this avoids confusing log messages
-    if (isRebroadcaster() && iface && p->hop_limit > 0) {
+    if (isRebroadcaster() && iface && p->hop_limit > 0 && (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY
+                   || (nodeDB->getMeshNode(p->from) != nullptr
+                       && nodeDB->getMeshNode(p->from)->is_favorite))) {
         // If we overhear a duplicate copy of the packet with more hops left than the one we are waiting to
         // rebroadcast, then remove the packet currently sitting in the TX queue and use this one instead.
         uint8_t dropThreshold = p->hop_limit; // remove queued packets that have fewer hops remaining

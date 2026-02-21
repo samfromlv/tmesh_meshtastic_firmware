@@ -51,7 +51,28 @@ constexpr int reconnectMax = 5;
 static uint8_t bytes[meshtastic_MqttClientProxyMessage_size + 30]; // 12 for channel name and 16 for nodeid
 
 static bool isMqttServerAddressPrivate = false;
+static bool isTmesh = false;
 static bool isConnected = false;
+
+// Keep track of the last few packet IDs received via MQTT so we don't
+// immediately re-publish them back out. A simple ring buffer of size 8.
+static uint32_t recentMqttPacketIds[8] = {0};
+static uint8_t recentMqttPacketPos = 0;
+
+inline void rememberMqttPacketId(uint32_t id)
+{
+    recentMqttPacketIds[recentMqttPacketPos] = id;
+    recentMqttPacketPos = (recentMqttPacketPos + 1) % 8;
+}
+
+inline bool isRecentMqttPacketId(uint32_t id)
+{
+    for (auto v : recentMqttPacketIds) {
+        if (v == id)
+            return true;
+    }
+    return false;
+}
 
 inline void onReceiveProto(char *topic, byte *payload, size_t length)
 {
@@ -63,23 +84,25 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
 
     const meshtastic_Channel &ch = channels.getByName(e.channel_id);
     // Find channel by channel_id and check downlink_enabled
-    if (!(strcmp(e.channel_id, "PKI") == 0 ||
-          (strcmp(e.channel_id, channels.getGlobalId(ch.index)) == 0 && ch.settings.downlink_enabled))) {
+    if (!isTmesh && !(strcmp(e.channel_id, "PKI") == 0 ||
+                      (strcmp(e.channel_id, channels.getGlobalId(ch.index)) == 0 && ch.settings.downlink_enabled))) {
         return;
     }
 
-    bool anyChannelHasDownlink = false;
-    size_t numChan = channels.getNumChannels();
-    for (size_t i = 0; i < numChan; ++i) {
-        const auto &c = channels.getByIndex(i);
-        if (c.settings.downlink_enabled) {
-            anyChannelHasDownlink = true;
-            break;
+    if (!isTmesh) {
+        bool anyChannelHasDownlink = false;
+        size_t numChan = channels.getNumChannels();
+        for (size_t i = 0; i < numChan; ++i) {
+            const auto &c = channels.getByIndex(i);
+            if (c.settings.downlink_enabled) {
+                anyChannelHasDownlink = true;
+                break;
+            }
         }
-    }
 
-    if (strcmp(e.channel_id, "PKI") == 0 && !anyChannelHasDownlink) {
-        return;
+        if (strcmp(e.channel_id, "PKI") == 0 && !anyChannelHasDownlink) {
+            return;
+        }
     }
     // Generate node ID from nodenum for comparison
     std::string nodeId = nodeDB->getNodeId();
@@ -102,11 +125,15 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
     }
 
     LOG_INFO("Received MQTT topic %s, len=%u", topic, length);
+
     if (e.packet->hop_limit > HOP_MAX || e.packet->hop_start > HOP_MAX) {
         LOG_INFO("Invalid hop_limit(%u) or hop_start(%u)", e.packet->hop_limit, e.packet->hop_start);
         return;
     }
 
+    if (isTmesh) {
+        rememberMqttPacketId(e.packet->id);
+    }
     UniquePacketPoolPacket p = packetPool.allocUniqueZeroed();
     p->from = e.packet->from;
     p->to = e.packet->to;
@@ -115,7 +142,9 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
     p->hop_limit = e.packet->hop_limit;
     p->hop_start = e.packet->hop_start;
     p->want_ack = e.packet->want_ack;
-    p->via_mqtt = true; // Mark that the packet was received via MQTT
+    if (!isTmesh) {
+        p->via_mqtt = true; // Mark that the packet was received via MQTT
+    }
     p->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT;
     p->which_payload_variant = e.packet->which_payload_variant;
     memcpy(&p->decoded, &e.packet->decoded, std::max(sizeof(p->decoded), sizeof(p->encrypted)));
@@ -133,13 +162,20 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
     }
 
     // PKI messages get accepted even if we can't decrypt
-    if (router && p->which_payload_variant == meshtastic_MeshPacket_encrypted_tag && strcmp(e.channel_id, "PKI") == 0) {
-        const meshtastic_NodeInfoLite *tx = nodeDB->getMeshNode(getFrom(p.get()));
-        const meshtastic_NodeInfoLite *rx = nodeDB->getMeshNode(p->to);
-        // Only accept PKI messages to us, or if we have both the sender and receiver in our nodeDB, as then it's
-        // likely they discovered each other via a channel we have downlink enabled for
-        if (isToUs(p.get()) || (tx && tx->has_user && rx && rx->has_user))
-            router->enqueueReceivedMessage(p.release());
+    if (router && p->which_payload_variant == meshtastic_MeshPacket_encrypted_tag &&
+        (isTmesh || strcmp(e.channel_id, "PKI") == 0)) {
+
+        if (!isTmesh) {
+            const meshtastic_NodeInfoLite *tx = nodeDB->getMeshNode(getFrom(p.get()));
+            const meshtastic_NodeInfoLite *rx = nodeDB->getMeshNode(p->to);
+            // Only accept PKI messages to us, or if we have both the sender and receiver in our nodeDB, as then it's
+            // likely they discovered each other via a channel we have downlink enabled for
+            if (!isToUs(p.get()) && !(tx && tx->has_user && rx && rx->has_user)) {
+                LOG_INFO("Ignore PKI message on MQTT without known sender and receiver");
+                return;
+            }
+        }
+        router->enqueueReceivedMessage(p.release());
     } else if (router &&
                perhapsDecode(p.get()) == DecodeState::DECODE_SUCCESS) // ignore messages if we don't have the channel key
         router->enqueueReceivedMessage(p.release());
@@ -281,6 +317,11 @@ bool isDefaultServer(const String &host)
     return host.length() == 0 || host == default_mqtt_address;
 }
 
+bool isTmeshServer(const String &host)
+{
+    return host.indexOf(tmesh_mqtt_address_part) != -1;
+}
+
 bool isDefaultRootTopic(const String &root)
 {
     return root.length() == 0 || root == default_mqtt_root;
@@ -298,6 +339,9 @@ struct PubSubConfig {
             serverPort = 8883;
         }
         std::tie(serverAddr, serverPort) = parseHostAndPort(serverAddr.c_str(), serverPort);
+        if (*config.address && isTmeshServer(serverAddr) && strlen(config.password) > 3) {
+            mqttPassword = config.password + 3;
+        }
     }
 
     // Defaults
@@ -440,6 +484,7 @@ MQTT::MQTT() : concurrency::OSThread("mqtt"), mqttQueue(MAX_MQTT_QUEUE)
 
         String host = parseHostAndPort(moduleConfig.mqtt.address).first;
         isConfiguredForDefaultServer = isDefaultServer(host);
+        isTmesh = isTmeshServer(host);
         IPAddress ip;
         isMqttServerAddressPrivate = ip.fromString(host.c_str()) && isPrivateIpAddress(ip);
 
@@ -739,15 +784,28 @@ void MQTT::publishQueuedMessages()
 
 void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_MeshPacket &mp_decoded, ChannelIndex chIndex)
 {
-    if (mp_encrypted.via_mqtt)
-        return; // Don't send messages that came from MQTT back into MQTT
-    bool uplinkEnabled = false;
-    for (int i = 0; i <= 7; i++) {
-        if (channels.getByIndex(i).settings.uplink_enabled)
-            uplinkEnabled = true;
+    bool isEncrypted = mp_decoded.which_payload_variant != meshtastic_MeshPacket_decoded_tag;
+    if (!isTmesh && isEncrypted && !mp_encrypted.pki_encrypted) {
+        return;
     }
-    if (!uplinkEnabled)
-        return; // no channels have an uplink enabled
+
+    // Skip publish if this packet originated from MQTT (via_mqtt) or its ID matches
+    // one of the recently received MQTT packet IDs.
+    if ((!isTmesh && mp_encrypted.via_mqtt) ||
+        (isTmesh && (mp_encrypted.transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT ||
+                     isRecentMqttPacketId(mp_encrypted.id)))) {
+        LOG_DEBUG("MQTT onSend - Skip publish for recent id=%u", mp_encrypted.id);
+        return; // Don't send messages that came from MQTT back into MQTT
+    }
+    bool uplinkEnabled = isTmesh;
+    if (!isTmesh) {
+        for (int i = 0; i <= 7; i++) {
+            if (channels.getByIndex(i).settings.uplink_enabled)
+                uplinkEnabled = true;
+        }
+        if (!uplinkEnabled)
+            return; // no channels have an uplink enabled
+    }
     auto &ch = channels.getByIndex(chIndex);
 
     // mp_decoded will not be decoded when it's PKI encrypted and not directed to us
@@ -755,7 +813,7 @@ void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_Me
         // For uplinking other's packets, check if it's not OK to MQTT or if it's an older packet without the bitfield
         bool dontUplink = !mp_decoded.decoded.has_bitfield || !(mp_decoded.decoded.bitfield & BITFIELD_OK_TO_MQTT_MASK);
         // check for the lowest bit of the data bitfield set false, and the use of one of the default keys.
-        if (!isFromUs(&mp_decoded) && !isMqttServerAddressPrivate && dontUplink &&
+        if (!isFromUs(&mp_decoded) && !isMqttServerAddressPrivate && !isTmesh && dontUplink &&
             (ch.settings.psk.size < 2 || (ch.settings.psk.size == 16 && memcmp(ch.settings.psk.bytes, defaultpsk, 16)) ||
              (ch.settings.psk.size == 32 && memcmp(ch.settings.psk.bytes, eventpsk, 32)))) {
             LOG_INFO("MQTT onSend - Not forwarding packet due to DontMqttMeBro flag");
@@ -771,9 +829,10 @@ void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_Me
     // Either encrypted packet (we couldn't decrypt) is marked as pki_encrypted, or we could decode the PKI encrypted packet
     bool isPKIEncrypted = mp_encrypted.pki_encrypted || mp_decoded.pki_encrypted;
     // If it was to a channel, check uplink enabled, else must be pki_encrypted
-    if (!(ch.settings.uplink_enabled || isPKIEncrypted))
+    if (!isTmesh && !(ch.settings.uplink_enabled || isPKIEncrypted))
         return;
-    const char *channelId = isPKIEncrypted ? "PKI" : channels.getGlobalId(chIndex);
+
+    const char *channelId = isPKIEncrypted ? "PKI" : (isEncrypted && isTmesh ? "UCH" : channels.getGlobalId(chIndex));
 
     LOG_DEBUG("MQTT onSend - Publish ");
     const meshtastic_MeshPacket *p;

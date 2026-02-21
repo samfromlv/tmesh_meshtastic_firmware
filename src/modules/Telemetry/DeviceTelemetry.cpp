@@ -19,13 +19,17 @@
 int32_t DeviceTelemetryModule::runOnce()
 {
     refreshUptime();
-    bool isImpoliteRole =
-        IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_SENSOR, meshtastic_Config_DeviceConfig_Role_ROUTER);
+
+    bool isTmeshMqtt = moduleConfig.mqtt.address && (strstr(moduleConfig.mqtt.address, tmesh_mqtt_address_part) != nullptr);
+
+    bool isImpoliteRole = isTmeshMqtt || IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_SENSOR,
+                                                   meshtastic_Config_DeviceConfig_Role_ROUTER);
     if (((lastSentToMesh == 0) ||
          ((uptimeLastMs - lastSentToMesh) >=
-          Default::getConfiguredOrDefaultMsScaled(moduleConfig.telemetry.device_update_interval,
-                                                  default_telemetry_broadcast_interval_secs, numOnlineNodes))) &&
-        airTime->isTxAllowedChannelUtil(!isImpoliteRole) && airTime->isTxAllowedAirUtil() &&
+          (isTmeshMqtt ? tmesh_telemetry_broadcast_interval_ms
+                       : Default::getConfiguredOrDefaultMsScaled(moduleConfig.telemetry.device_update_interval,
+                                                                 default_telemetry_broadcast_interval_secs, numOnlineNodes)))) &&
+        (isTmeshMqtt || (airTime->isTxAllowedChannelUtil(!isImpoliteRole) && airTime->isTxAllowedAirUtil())) &&
         config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT_HIDDEN &&
         moduleConfig.telemetry.device_telemetry_enabled) {
         sendTelemetry();

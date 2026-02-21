@@ -414,11 +414,11 @@ DecodeState perhapsDecode(meshtastic_MeshPacket *p)
 {
     concurrency::LockGuard g(cryptLock);
 
-    if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
-        (nodeDB->getMeshNode(p->from) == NULL || !nodeDB->getMeshNode(p->from)->has_user)) {
-        LOG_DEBUG("Node 0x%x not in nodeDB-> Rebroadcast mode KNOWN_ONLY will ignore packet", p->from);
-        return DecodeState::DECODE_FAILURE;
-    }
+    // if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
+    //     (nodeDB->getMeshNode(p->from) == NULL || !nodeDB->getMeshNode(p->from)->has_user)) {
+    //     LOG_DEBUG("Node 0x%x not in nodeDB-> Rebroadcast mode KNOWN_ONLY will ignore packet", p->from);
+    //     return DecodeState::DECODE_FAILURE;
+    // }
 
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag)
         return DecodeState::DECODE_SUCCESS; // If packet was already decoded just return
@@ -764,8 +764,11 @@ void Router::handleReceived(meshtastic_MeshPacket *p, RxSource src)
                 !isBroadcast(p->to) && !isToUs(p))
                 p_encrypted->pki_encrypted = true;
             // After potentially altering it, publish received message to MQTT if we're not the original transmitter of the packet
-            if ((decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) && moduleConfig.mqtt.enabled &&
-                !isFromUs(p) && mqtt)
+        if (
+            //(decodedState == DecodeState::DECODE_SUCCESS
+            //     || p_encrypted->pki_encrypted)
+            //&&
+            moduleConfig.mqtt.enabled && !isFromUs(p) && mqtt)
                 mqtt->onSend(*p_encrypted, *p, p->channel);
         }
 #endif
