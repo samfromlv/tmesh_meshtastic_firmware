@@ -54,3 +54,4 @@ CMakeLists.txt
 # PYTHONPATH used by the Nix shell
 .python3
 bin/upload-release.sh
+bin/releases.json
