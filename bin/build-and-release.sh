@@ -47,8 +47,8 @@ for ENV in $TARGETS; do
       -o -name '*.mt.json' \
       \) | while read f; do
       base=$(basename "$f")
-      echo "Copying $f -> $RELEASE_DIR/${ENV}_$base"
-      cp "$f" "$RELEASE_DIR/${ENV}_$base"
+      echo "Copying $f -> $RELEASE_DIR/$base"
+      cp "$f" "$RELEASE_DIR/$base"
     done
 
     echo "Cleaning up $BUILD_DIR, keeping only firmware files..."
