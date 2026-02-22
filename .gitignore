@@ -55,3 +55,4 @@ CMakeLists.txt
 .python3
 bin/upload-release.sh
 bin/releases.json
+bin/download-release.sh
