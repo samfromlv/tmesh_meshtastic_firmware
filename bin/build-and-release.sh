@@ -8,7 +8,7 @@ RELEASE_DIR=".pio/release"
 rm -rf "$RELEASE_DIR"
 #startFromTarget='tlora-c6'
 mkdir -p "$RELEASE_DIR"
-
+skipBuild=false
 # Build all PlatformIO environments
 # Get list of targets from release_json_template.json
 TARGETS=$(jq -r '.targets[].board' bin/release_json_template.json)
@@ -28,7 +28,12 @@ for ENV in $TARGETS; do
     fi
   fi
 
-  platformio run -e "$ENV"
+  if [ "$skipBuild" = true ]; then
+    echo "Skipping build for $ENV, just collecting files..."
+  else
+    echo "Running build for $ENV..."
+    platformio run -e "$ENV"
+  fi
 
   BUILD_DIR=".pio/build/$ENV"
   if [ -d "$BUILD_DIR" ]; then
