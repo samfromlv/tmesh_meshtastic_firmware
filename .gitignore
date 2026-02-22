@@ -58,3 +58,4 @@ CMakeLists.txt
 userPrefs.jsonc.mcp-session-bak
 bin/upload-release.sh
 bin/releases.json
+bin/download-release.sh
