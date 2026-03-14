@@ -11,9 +11,36 @@ mkdir -p "$RELEASE_DIR"
 skipBuild=false
 # Build all PlatformIO environments
 # Get list of targets from release_json_template.json
+
 TARGETS=$(jq -r '.targets[].board' bin/release_json_template.json)
 
+# Check that all targets exist in PlatformIO environments
+MISSING_ENVS=""
+for ENV in $TARGETS; do
+  if ! platformio run --list-targets -e "$ENV" >/dev/null 2>&1; then
+    echo "Error: PlatformIO environment '$ENV' does not exist!"
+    MISSING_ENVS="$MISSING_ENVS $ENV"
+  else
+    echo "Found PlatformIO environment '$ENV', ready to build."
+  fi
+done
+
+if [ -n "$MISSING_ENVS" ]; then
+  echo "\nThe following environments are missing in PlatformIO configuration:$MISSING_ENVS"
+  echo "Aborting build. Please check your release_json_template.json and platformio.ini."
+  exit 1
+fi
+
 echo "Building targets one by one and cleaning up after each..."
+
+
+# Read extra build flags from build-flags-extra.txt and set PLATFORMIO_BUILD_FLAGS
+EXTRA_FLAGS_FILE="$(dirname "$0")/build-flags-extra.txt"
+if [ -f "$EXTRA_FLAGS_FILE" ]; then
+  export PLATFORMIO_BUILD_FLAGS="$(cat "$EXTRA_FLAGS_FILE")"
+else
+  unset PLATFORMIO_BUILD_FLAGS
+fi
 
 for ENV in $TARGETS; do
   echo "Building $ENV..."
