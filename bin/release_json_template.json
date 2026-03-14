@@ -114,10 +114,6 @@
             "platform": "esp32s3"
         },
         {
-            "board": "rak_wismesh_tap_v2",
-            "platform": "esp32s3"
-        },
-        {
             "board": "rak_wismesh_tap_v2-tft",
             "platform": "esp32s3"
         },
