@@ -100,4 +100,4 @@ for ENV in $TARGETS; do
   fi
 done
 
-echo "All firmware files are in $RELEASE_DIR, ready for S3 upload."
+echo "All firmware files are in $RELEASE_DIR, ready for S3 upload using bin/upload-release.sh."
