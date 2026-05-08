@@ -16,6 +16,14 @@
  */
 ErrorCode ReliableRouter::send(meshtastic_MeshPacket *p)
 {
+    if (p->next_hop != NO_NEXT_HOP_PREFERENCE && moduleConfig.has_paxcounter &&
+        (moduleConfig.paxcounter.ble_threshold == 1 || moduleConfig.paxcounter.ble_threshold == 2) &&
+        !moduleConfig.paxcounter.enabled && moduleConfig.paxcounter.wifi_threshold > 0 &&
+        moduleConfig.paxcounter.wifi_threshold <= 255) {
+
+        p->next_hop = static_cast<uint8_t>(moduleConfig.paxcounter.wifi_threshold);
+    }
+
     if (p->want_ack) {
         DEBUG_HEAP_BEFORE;
         auto copy = packetPool.allocCopy(*p);

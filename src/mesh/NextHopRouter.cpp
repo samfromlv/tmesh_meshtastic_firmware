@@ -128,7 +128,9 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
 {
     if (!isToUs(p) && !isFromUs(p) && p->hop_limit > 0) {
         if (p->id != 0) {
-            if (isRebroadcaster()) {
+            if (isRebroadcaster() &&
+                (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY ||
+                 (nodeDB->getMeshNode(p->from) != nullptr && nodeDB->getMeshNode(p->from)->is_favorite))) {
                 if (p->next_hop == NO_NEXT_HOP_PREFERENCE || p->next_hop == nodeDB->getLastByteOfNodeNum(getNodeNum())) {
                     meshtastic_MeshPacket *tosend = packetPool.allocCopy(*p); // keep a copy because we will be sending it
                     LOG_INFO("Rebroadcast received message coming from %x", p->relay_node);
@@ -148,6 +150,11 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
 #endif
 
                     if (p->next_hop == NO_NEXT_HOP_PREFERENCE) {
+                        if (moduleConfig.has_paxcounter && moduleConfig.paxcounter.ble_threshold == 2 &&
+                            !moduleConfig.paxcounter.enabled && moduleConfig.paxcounter.wifi_threshold > 0 &&
+                            moduleConfig.paxcounter.wifi_threshold <= 255) {
+                            tosend->next_hop = static_cast<uint8_t>(moduleConfig.paxcounter.wifi_threshold);
+                        }
                         FloodingRouter::send(tosend);
                     } else {
                         NextHopRouter::send(tosend);
@@ -305,6 +312,11 @@ int32_t NextHopRouter::doRetransmissions()
                         NextHopRouter::send(packetPool.allocCopy(*p.packet));
                     }
                 } else {
+                    if (p.numRetransmissions == 1 && moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+                        (moduleConfig.paxcounter.ble_threshold == 1 || moduleConfig.paxcounter.ble_threshold == 2) &&
+                        moduleConfig.paxcounter.wifi_threshold <= 255 && moduleConfig.paxcounter.wifi_threshold > 0) {
+                        p.packet->next_hop = NO_NEXT_HOP_PREFERENCE;
+                    }
                     // Note: we call the superclass version because we don't want to have our version of send() add a new
                     // retransmission record
                     FloodingRouter::send(packetPool.allocCopy(*p.packet));
