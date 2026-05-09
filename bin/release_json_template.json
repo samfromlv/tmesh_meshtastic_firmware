@@ -66,6 +66,10 @@
             "platform": "esp32s3"
         },
         {
+            "board": "t-deck-pro-v1_1",
+            "platform": "esp32s3"
+        },
+        {
             "board": "rak3312",
             "platform": "esp32s3"
         },
@@ -83,6 +87,14 @@
         },
         {
             "board": "station-g2",
+            "platform": "esp32s3"
+        },
+        {
+            "board": "heltec-v4-r8-oled",
+            "platform": "esp32s3"
+        },
+        {
+            "board": "heltec-v4-r8-tft",
             "platform": "esp32s3"
         },
         {
