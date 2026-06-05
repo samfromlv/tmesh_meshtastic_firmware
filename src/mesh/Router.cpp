@@ -96,6 +96,25 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
         return true;
     }
 
+    if (moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+        moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE && moduleConfig.paxcounter.wifi_threshold > 0 &&
+        moduleConfig.paxcounter.wifi_threshold == p->relay_node) {
+        return false; // Don't decrement if previous relay is the configured favorite router
+    }
+
+#if HAS_TRAFFIC_MANAGEMENT
+    // When router_preserve_hops is enabled, preserve hops for decoded packets that are not
+    // position or telemetry (those have their own exhaust_hop controls).
+    if (moduleConfig.has_traffic_management && moduleConfig.traffic_management.enabled &&
+        moduleConfig.traffic_management.router_preserve_hops && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+        p->decoded.portnum != meshtastic_PortNum_POSITION_APP && p->decoded.portnum != meshtastic_PortNum_TELEMETRY_APP) {
+        LOG_DEBUG("Router hop preserved: port=%d from=0x%08x (traffic_management)", p->decoded.portnum, getFrom(p));
+        if (trafficManagementModule) {
+            trafficManagementModule->recordRouterHopPreserved();
+        }
+        return false;
+    }
+#endif
     // For subsequent hops, check if previous relay is a favorite router
     // Optimized search for favorite routers with matching last byte
     // Check ordering optimized for IoT devices (cheapest checks first)
@@ -798,8 +817,11 @@ void Router::handleReceived(meshtastic_MeshPacket *p, RxSource src)
                 !isBroadcast(p->to) && !isToUs(p))
                 p_encrypted->pki_encrypted = true;
             // After potentially altering it, publish received message to MQTT if we're not the original transmitter of the packet
-            if ((decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) && moduleConfig.mqtt.enabled &&
-                !isFromUs(p) && mqtt) {
+            if (
+                // TMesh should publish all packets to MQTT
+                //(decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) &&
+
+                moduleConfig.mqtt.enabled && !isFromUs(p) && mqtt) {
                 if (decodedState == DecodeState::DECODE_SUCCESS && p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP &&
                     moduleConfig.mqtt.encryption_enabled) {
                     // For TRACEROUTE_APP packets release the original encrypted packet and encrypt a new from the changed packet

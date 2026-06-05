@@ -317,8 +317,8 @@ int32_t NextHopRouter::doRetransmissions()
                 } else {
                     if (p.packet->next_hop != NO_NEXT_HOP_PREFERENCE && p.numRetransmissions == 1 &&
                         moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-                        (moduleConfig.paxcounter.ble_threshold >= FORCE_NEXT_HOP_MY_ONLY_WITH_FALLBACK &&
-                         moduleConfig.paxcounter.ble_threshold <= FORCE_NEXT_HOP_MY_AND_OTHERS_WITH_FALLBACK) &&
+                        (moduleConfig.paxcounter.ble_threshold == FORCE_NEXT_HOP_MY_ONLY_WITH_FALLBACK ||
+                         moduleConfig.paxcounter.ble_threshold == FORCE_NEXT_HOP_MY_AND_OTHERS_WITH_FALLBACK) &&
                         moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold <= 255) {
                         LOG_DEBUG("Paxcounter: resetting next hop to no pref for last retransmission");
                         p.packet->next_hop = NO_NEXT_HOP_PREFERENCE;
