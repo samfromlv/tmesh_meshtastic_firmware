@@ -17,7 +17,7 @@
 ErrorCode ReliableRouter::send(meshtastic_MeshPacket *p)
 {
     if (p->next_hop == NO_NEXT_HOP_PREFERENCE && moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-        (moduleConfig.paxcounter.ble_threshold >= FORCE_NEXT_HOP_MY_ONLY_WITH_FALLBACK ||
+        (moduleConfig.paxcounter.ble_threshold >= FORCE_NEXT_HOP_MY_ONLY_WITH_FALLBACK &&
          moduleConfig.paxcounter.ble_threshold <= FORCE_NEXT_HOP_ALL) &&
         moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold <= 255) {
 
