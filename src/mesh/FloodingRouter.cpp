@@ -131,8 +131,8 @@ bool FloodingRouter::roleAllowsCancelingDupe(const meshtastic_MeshPacket *p)
         // we should act like a ROUTER and should never cancel a rebroadcast (i.e. we should always rebroadcast),
         // even if we've heard another station rebroadcast it already.
         return !(moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-                 moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE && moduleConfig.paxcounter.wifi_threshold > 0 &&
-                 moduleConfig.paxcounter.wifi_threshold == p->relay_node) &&
+                 moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY &&
+                 moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) &&
                !nodeDB->isFromOrToFavoritedNode(*p);
     }
 
@@ -152,11 +152,13 @@ void FloodingRouter::perhapsCancelDupe(const meshtastic_MeshPacket *p)
         iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
     }
 
-    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface && nodeDB &&
+    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface &&
         ((moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-          moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE && moduleConfig.paxcounter.wifi_threshold > 0 &&
-          moduleConfig.paxcounter.wifi_threshold == p->relay_node) ||
-         nodeDB->isFromOrToFavoritedNode(*p))) {
+          moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY &&
+          moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) ||
+         (nodeDB && nodeDB->isFromOrToFavoritedNode(*p)))) {
+
+        LOG_DEBUG("Clamping packet 0x%08x from favorite node 0x%08x to late rebroadcast window", p->id, getFrom(p));
         iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
     }
 }

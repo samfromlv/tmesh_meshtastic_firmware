@@ -97,8 +97,9 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
     }
 
     if (moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-        moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE && moduleConfig.paxcounter.wifi_threshold > 0 &&
-        moduleConfig.paxcounter.wifi_threshold == p->relay_node) {
+        (moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY ||
+         moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_ONLY) &&
+        moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) {
         return false; // Don't decrement if previous relay is the configured favorite router
     }
 
