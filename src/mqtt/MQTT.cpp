@@ -56,6 +56,8 @@ static uint8_t bytes[meshtastic_MqttClientProxyMessage_size + 30]; // 12 for cha
 static bool isMqttServerAddressPrivate = false;
 static bool isTmesh = false;
 static bool isConnected = false;
+static uint32_t lastPositionUnavailableWarning = 0;
+static const uint32_t POSITION_UNAVAILABLE_WARNING_INTERVAL_MS = 15000; // 15 seconds
 
 // Keep track of the last few packet IDs received via MQTT so we don't
 // immediately re-publish them back out. A simple ring buffer of size 8.
