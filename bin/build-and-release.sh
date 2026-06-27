@@ -13,6 +13,12 @@ skipBuild=false
 # Get list of targets from release_json_template.json
 
 TARGETS=$(jq -r '.targets[].board' bin/release_json_template.json)
+VERSION="$($(dirname "$0")/get_version.sh)"
+
+if [ -z "$VERSION" ]; then
+  echo "Error: Could not determine version from bin/get_version.sh"
+  exit 1
+fi
 
 # Check that all targets exist in PlatformIO environments
 MISSING_ENVS=""
@@ -65,7 +71,13 @@ for ENV in $TARGETS; do
   BUILD_DIR=".pio/build/$ENV"
   if [ -d "$BUILD_DIR" ]; then
     echo "Collecting firmware files for $ENV..."
-    find "$BUILD_DIR" -type f \
+    collected_files=()
+    while IFS= read -r -d '' f; do
+      collected_files+=("$f")
+      base=$(basename "$f")
+      echo "Copying $f -> $RELEASE_DIR/$base"
+      cp "$f" "$RELEASE_DIR/$base"
+    done < <(find "$BUILD_DIR" -type f \
       \( -name 'firmware-*.bin' \
       -o -name 'firmware-*.uf2' \
       -o -name 'firmware-*.hex' \
@@ -77,11 +89,19 @@ for ENV in $TARGETS; do
       -o -name 'Meshtastic_nRF52_factory_erase*.uf2' \
       -o -name '*.elf' \
       -o -name '*.mt.json' \
-      \) | while read f; do
-      base=$(basename "$f")
-      echo "Copying $f -> $RELEASE_DIR/$base"
-      cp "$f" "$RELEASE_DIR/$base"
-    done
+      \) -print0)
+
+    target_zip="$BUILD_DIR/${ENV}-${VERSION}-tmesh.zip"
+    if [ ${#collected_files[@]} -gt 0 ]; then
+      echo "Creating per-target release archive $(basename "$target_zip")..."
+      rm -f "$target_zip"
+      zip -j -q "$target_zip" "${collected_files[@]}"
+      base=$(basename "$target_zip")
+      echo "Copying $target_zip -> $RELEASE_DIR/$base"
+      cp "$target_zip" "$RELEASE_DIR/$base"
+    else
+      echo "No collectible files found for $ENV, skipping archive creation."
+    fi
 
     echo "Cleaning up $BUILD_DIR, keeping only firmware files..."
     find "$BUILD_DIR" -type f \
@@ -89,6 +109,7 @@ for ENV in $TARGETS; do
       -o -name 'firmware-*.uf2' \
       -o -name 'firmware-*.hex' \
       -o -name 'firmware-*.zip' \
+      -o -name '*-tmesh.zip' \
       -o -name 'device-*.sh' \
       -o -name 'device-*.bat' \
       -o -name 'littlefs-*.bin' \
