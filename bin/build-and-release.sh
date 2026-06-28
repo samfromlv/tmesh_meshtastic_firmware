@@ -6,9 +6,10 @@ RELEASE_DIR=".pio/release"
 
 # Clean previous release dir
 rm -rf "$RELEASE_DIR"
-#startFromTarget='tlora-c6'
+#startFromTarget='picomputer-s3-tft'
 mkdir -p "$RELEASE_DIR"
 skipBuild=false
+skipTargetsCheck=false
 # Build all PlatformIO environments
 # Get list of targets from release_json_template.json
 
@@ -22,14 +23,20 @@ fi
 
 # Check that all targets exist in PlatformIO environments
 MISSING_ENVS=""
-for ENV in $TARGETS; do
-  if ! platformio run --list-targets -e "$ENV" >/dev/null 2>&1; then
-    echo "Error: PlatformIO environment '$ENV' does not exist!"
-    MISSING_ENVS="$MISSING_ENVS $ENV"
-  else
-    echo "Found PlatformIO environment '$ENV', ready to build."
-  fi
-done
+
+if [ "$skipTargetsCheck" = true ]; then
+  echo "Skipping PlatformIO environment check for targets."
+else
+  echo "Checking that all targets exist in PlatformIO environments..."
+  for ENV in $TARGETS; do
+    if ! platformio run --list-targets -e "$ENV" >/dev/null 2>&1; then
+      echo "Error: PlatformIO environment '$ENV' does not exist!"
+      MISSING_ENVS="$MISSING_ENVS $ENV"
+    else
+      echo "Found PlatformIO environment '$ENV', ready to build."
+    fi
+  done
+fi
 
 if [ -n "$MISSING_ENVS" ]; then
   echo "\nThe following environments are missing in PlatformIO configuration:$MISSING_ENVS"
