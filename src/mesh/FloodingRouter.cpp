@@ -4,6 +4,7 @@
 #include "configuration.h"
 #include "mesh-pb-constants.h"
 #include "meshUtils.h"
+#include "modules/TextMessageModule.h"
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
 #include "modules/TraceRouteModule.h"
 #endif
@@ -35,6 +36,10 @@ bool FloodingRouter::shouldFilterReceived(const meshtastic_MeshPacket *p)
         return true; // we handled it, so stop processing
     }
 
+    if (!seenRecently && !wasUpgraded && textMessageModule) {
+        seenRecently = textMessageModule->recentlySeen(p->id);
+    }
+
     if (seenRecently) {
         printPacket("Ignore dupe incoming msg", p);
         rxDupe++;
@@ -62,9 +67,9 @@ bool FloodingRouter::shouldFilterReceived(const meshtastic_MeshPacket *p)
 bool FloodingRouter::perhapsHandleUpgradedPacket(const meshtastic_MeshPacket *p)
 {
     // isRebroadcaster() is duplicated in perhapsRebroadcast(), but this avoids confusing log messages
-    if (isRebroadcaster() && iface && p->hop_limit > 0 && (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY
-                   || (nodeDB->getMeshNode(p->from) != nullptr
-                       && nodeDB->getMeshNode(p->from)->is_favorite))) {
+    if (isRebroadcaster() && iface && p->hop_limit > 0 &&
+        (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY ||
+         (nodeDB->getMeshNode(p->from) != nullptr && nodeDB->getMeshNode(p->from)->is_favorite))) {
         // If we overhear a duplicate copy of the packet with more hops left than the one we are waiting to
         // rebroadcast, then remove the packet currently sitting in the TX queue and use this one instead.
         uint8_t dropThreshold = p->hop_limit; // remove queued packets that have fewer hops remaining
@@ -88,10 +93,27 @@ void FloodingRouter::reprocessPacket(const meshtastic_MeshPacket *p)
 {
     if (nodeDB)
         nodeDB->updateFrom(*p);
+
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
+    if (traceRouteModule && p->which_payload_variant != meshtastic_MeshPacket_decoded_tag) {
+        // If we got a packet that is not decoded, try to decode it so we can check for traceroute.
+        auto decodedState = perhapsDecode(const_cast<meshtastic_MeshPacket *>(p));
+        if (decodedState == DecodeState::DECODE_SUCCESS) {
+            // parsing was successful, print for debugging
+            printPacket("reprocessPacket(DUP)", p);
+        } else {
+            // Fatal decoding error, we can't do anything with this packet
+            LOG_WARN(
+                "FloodingRouter::reprocessPacket: Fatal decode error (state=%d, id=0x%08x, from=%u), can't check for traceroute",
+                static_cast<int>(decodedState), p->id, getFrom(p));
+            return;
+        }
+    }
+
     if (traceRouteModule && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
-        p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP)
+        p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP) {
         traceRouteModule->processUpgradedPacket(*p);
+    }
 #endif
 }
 
@@ -108,7 +130,10 @@ bool FloodingRouter::roleAllowsCancelingDupe(const meshtastic_MeshPacket *p)
         // CLIENT_BASE: if the packet is from or to a favorited node,
         // we should act like a ROUTER and should never cancel a rebroadcast (i.e. we should always rebroadcast),
         // even if we've heard another station rebroadcast it already.
-        return !nodeDB->isFromOrToFavoritedNode(*p);
+        return !(moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+                 moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY &&
+                 moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) &&
+               !nodeDB->isFromOrToFavoritedNode(*p);
     }
 
     // All other roles (such as CLIENT) should cancel a rebroadcast if they hear another station's rebroadcast.
@@ -124,6 +149,16 @@ void FloodingRouter::perhapsCancelDupe(const meshtastic_MeshPacket *p)
             txRelayCanceled++;
     }
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE && iface) {
+        iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
+    }
+
+    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface &&
+        ((moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+          moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY &&
+          moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) ||
+         (nodeDB && nodeDB->isFromOrToFavoritedNode(*p)))) {
+
+        LOG_DEBUG("Clamping packet 0x%08x from favorite node 0x%08x to late rebroadcast window", p->id, getFrom(p));
         iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
     }
 }
