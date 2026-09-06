@@ -252,7 +252,9 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
     // Allow rebroadcast if hop_limit > 0 OR if we're exhausting hops (which sets hop_limit = 0 but still needs one relay)
     if (!isToUs(p) && !isFromUs(p) && (p->hop_limit > 0 || exhaustHops)) {
         if (p->id != 0) {
-            if (isRebroadcaster()) {
+            if (isRebroadcaster() &&
+                (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY ||
+                 (nodeDB->getMeshNode(p->from) != nullptr && nodeInfoLiteIsFavorite(nodeDB->getMeshNode(p->from))))) {
                 // NOTE: this is a self-identity match (is the addressed next_hop OUR last byte?), so it
                 // cannot be hardened with resolveLastByte() - a remote node that legitimately shares our
                 // last byte will also match here and rebroadcast. That residual collision needs a wider
@@ -278,8 +280,20 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
                     capEventRelayHops(tosend);
 #endif
 
-                    ErrorCode res =
-                        (p->next_hop == NO_NEXT_HOP_PREFERENCE) ? FloodingRouter::send(tosend) : NextHopRouter::send(tosend);
+                    ErrorCode res;
+                    if (p->next_hop == NO_NEXT_HOP_PREFERENCE) {
+                        if (moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+                            (moduleConfig.paxcounter.ble_threshold >= FORCE_NEXT_HOP_MY_AND_OTHERS_WITH_FALLBACK &&
+                             moduleConfig.paxcounter.ble_threshold <= FORCE_NEXT_HOP_ALL) &&
+                            moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold <= 255) {
+                            tosend->next_hop = static_cast<uint8_t>(moduleConfig.paxcounter.wifi_threshold);
+                            LOG_DEBUG("NHR rebroadcast - Paxcounter: Forcing next hop to %d due to paxcounter config",
+                                      tosend->next_hop);
+                        }
+                        res = FloodingRouter::send(tosend);
+                    } else {
+                        res = NextHopRouter::send(tosend);
+                    }
                     if (res == ERRNO_SHOULD_RELEASE)
                         packetPool.release(tosend);
 
@@ -524,6 +538,14 @@ int32_t NextHopRouter::doRetransmissions()
 #endif
                     }
                 } else {
+                    if (p.packet->next_hop != NO_NEXT_HOP_PREFERENCE && p.numRetransmissions == 1 &&
+                        moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+                        (moduleConfig.paxcounter.ble_threshold == FORCE_NEXT_HOP_MY_ONLY_WITH_FALLBACK ||
+                         moduleConfig.paxcounter.ble_threshold == FORCE_NEXT_HOP_MY_AND_OTHERS_WITH_FALLBACK) &&
+                        moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold <= 255) {
+                        LOG_DEBUG("Paxcounter: resetting next hop to no pref for last retransmission");
+                        p.packet->next_hop = NO_NEXT_HOP_PREFERENCE;
+                    }
                     // Note: we call the superclass version because we don't want to have our version of send() add a new
                     // retransmission record
                     if (auto *copy = packetPool.allocCopy(*p.packet)) {

@@ -18,6 +18,7 @@
 #define default_gps_update_interval IF_ROUTER(ONE_DAY, 2 * 60)
 #define default_telemetry_broadcast_interval_secs IF_ROUTER(ONE_DAY / 2, 60 * 60)
 #define default_broadcast_interval_secs IF_ROUTER(ONE_DAY / 2, 60 * 60)
+#define tmesh_telemetry_broadcast_interval_ms 60 * 60 * 1000
 #define default_broadcast_smart_minimum_interval_secs 5 * 60
 // Floor for our own position broadcasts when stationary (unchanged beyond the broadcast
 // precision) or fixed_position: identical positions get deduped by traffic management anyway.
@@ -66,6 +67,7 @@ enum class TrafficType { POSITION, TELEMETRY };
 #define default_network_ipv6_enabled false
 
 #define default_mqtt_address "mqtt.meshtastic.org"
+#define tmesh_mqtt_address_part "tmesh."
 #define default_mqtt_username "meshdev"
 #define default_mqtt_password "large4cats"
 #define default_mqtt_root "msh"

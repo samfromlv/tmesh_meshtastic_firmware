@@ -263,12 +263,19 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
         return true;
     }
 
+    if (moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+        (moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY ||
+         moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_ONLY) &&
+        moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) {
+        return false; // Don't decrement if previous relay is the configured favorite router
+    }
     // router_preserve_hops: not suitable right now - removed from config until
     // the right heuristics for when to preserve vs. exhaust hops are established.
     // #if HAS_TRAFFIC_MANAGEMENT
     //     if (moduleConfig.has_traffic_management &&
     //         moduleConfig.traffic_management.router_preserve_hops && ...) { ... }
     // #endif
+
 
     // For subsequent hops, preserve hop_limit only when the previous relay is UNAMBIGUOUSLY a favorite
     // router. The relay_node byte is just the last byte of a 32-bit node number, so on a dense mesh it
@@ -920,11 +927,11 @@ DecodeState perhapsDecode(meshtastic_MeshPacket *p)
 {
     concurrency::LockGuard g(cryptLock);
 
-    if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
-        !nodeInfoLiteHasUser(nodeDB->getMeshNode(p->from))) {
-        LOG_DEBUG("Node 0x%08x not in nodeDB, Rebroadcast KNOWN_ONLY ignores packet", p->from);
-        return DecodeState::DECODE_FAILURE;
-    }
+    //if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
+    //    !nodeInfoLiteHasUser(nodeDB->getMeshNode(p->from))) {
+    //    LOG_DEBUG("Node 0x%08x not in nodeDB, Rebroadcast KNOWN_ONLY ignores packet", p->from);
+    //    return DecodeState::DECODE_FAILURE;
+    //}
 
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag)
         return DecodeState::DECODE_SUCCESS; // If packet was already decoded just return
@@ -1600,8 +1607,11 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
                 !isBroadcast(p->to) && !isToUs(p))
                 p_encrypted->pki_encrypted = true;
             // After potentially altering it, publish received message to MQTT if we're not the original transmitter of the packet
-            if ((decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) && moduleConfig.mqtt.enabled &&
-                !isFromUs(p) && mqtt) {
+            if (
+                // TMesh should publish all packets to MQTT
+                //(decodedState == DecodeState::DECODE_SUCCESS || p_encrypted->pki_encrypted) &&
+
+                moduleConfig.mqtt.enabled && !isFromUs(p) && mqtt) {
                 if (decodedState == DecodeState::DECODE_SUCCESS && p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP &&
                     moduleConfig.mqtt.encryption_enabled) {
                     // For TRACEROUTE_APP packets release the original encrypted packet and encrypt a new from the changed packet

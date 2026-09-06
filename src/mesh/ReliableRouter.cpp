@@ -16,6 +16,14 @@
  */
 ErrorCode ReliableRouter::send(meshtastic_MeshPacket *p)
 {
+    if (p->next_hop == NO_NEXT_HOP_PREFERENCE && moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
+        (moduleConfig.paxcounter.ble_threshold >= FORCE_NEXT_HOP_MY_ONLY_WITH_FALLBACK &&
+         moduleConfig.paxcounter.ble_threshold <= FORCE_NEXT_HOP_ALL) &&
+        moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold <= 255) {
+
+        p->next_hop = static_cast<uint8_t>(moduleConfig.paxcounter.wifi_threshold);
+        LOG_DEBUG("RRSend - Forcing next hop to %d due to paxcounter config", p->next_hop);
+    }
     if (isBlockedEventCoordinatePacket(p)) {
         LOG_DEBUG("Suppress reliable coordinate send on event (everyone) channel");
         packetPool.release(p);
