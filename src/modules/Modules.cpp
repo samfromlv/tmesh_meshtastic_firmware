@@ -19,6 +19,9 @@
 #if !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
 #include "modules/CannedMessageModule.h"
 #endif
+#if HAS_SCREEN && BASEUI_HAS_GAMES
+#include "modules/games/GamesModule.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_DETECTIONSENSOR
 #include "modules/DetectionSensorModule.h"
 #endif
@@ -27,6 +30,9 @@
 #endif
 #if !MESHTASTIC_EXCLUDE_NODEINFO
 #include "modules/NodeInfoModule.h"
+#endif
+#if !MESHTASTIC_EXCLUDE_BEACON
+#include "modules/MeshBeaconModule.h"
 #endif
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "modules/PositionModule.h"
@@ -38,11 +44,18 @@
 #include "modules/PowerStressModule.h"
 #endif
 #include "modules/RoutingModule.h"
+#if HAS_TRAFFIC_MANAGEMENT && !MESHTASTIC_EXCLUDE_TRAFFIC_MANAGEMENT
+#include "modules/TrafficManagementModule.h"
+#endif
+#if HAS_VARIABLE_HOPS
+#include "modules/HopScalingModule.h"
+#endif
 #include "modules/TextMessageModule.h"
 #if !MESHTASTIC_EXCLUDE_TRACEROUTE
 #include "modules/TraceRouteModule.h"
 #endif
 #if !MESHTASTIC_EXCLUDE_WAYPOINT
+#include "modules/GeofenceModule.h"
 #include "modules/WaypointModule.h"
 #endif
 #if ARCH_PORTDUINO
@@ -120,17 +133,34 @@ void setupModules()
 #if !MESHTASTIC_EXCLUDE_REPLYBOT
     new ReplyBotModule();
 #endif
+
+#if HAS_TRAFFIC_MANAGEMENT && !MESHTASTIC_EXCLUDE_TRAFFIC_MANAGEMENT
+    if (moduleConfig.has_traffic_management) {
+        trafficManagementModule = new TrafficManagementModule();
+    }
+#endif
+
+#if HAS_VARIABLE_HOPS
+    hopScalingModule = new HopScalingModule();
+#endif
+
 #if !MESHTASTIC_EXCLUDE_ADMIN
     adminModule = new AdminModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_NODEINFO
     nodeInfoModule = new NodeInfoModule();
 #endif
+#if !MESHTASTIC_EXCLUDE_BEACON
+    meshBeaconBroadcastModule = new MeshBeaconBroadcastModule();
+    meshBeaconListenerModule = new MeshBeaconListenerModule();
+    meshBeaconTxHook = new MeshBeaconTxHook(); // registers itself with the radio driver's TX hooks
+#endif
 #if !MESHTASTIC_EXCLUDE_GPS
     positionModule = new PositionModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_WAYPOINT
     waypointModule = new WaypointModule();
+    geofenceModule = new GeofenceModule();
 #endif
 #if !MESHTASTIC_EXCLUDE_TEXTMESSAGE
     textMessageModule = new TextMessageModule();
@@ -182,6 +212,11 @@ void setupModules()
         cannedMessageModule = new CannedMessageModule();
     }
 #endif
+#if HAS_SCREEN && BASEUI_HAS_GAMES
+    if (config.display.displaymode != meshtastic_Config_DisplayConfig_DisplayMode_COLOR) {
+        gamesModule = new GamesModule();
+    }
+#endif
 #if ARCH_PORTDUINO
     new HostMetricsModule();
 #endif
@@ -191,7 +226,7 @@ void setupModules()
 #if HAS_TELEMETRY && HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
     if (moduleConfig.has_telemetry &&
         (moduleConfig.telemetry.environment_measurement_enabled || moduleConfig.telemetry.environment_screen_enabled)) {
-        new EnvironmentTelemetryModule();
+        environmentTelemetryModule = new EnvironmentTelemetryModule();
     }
 #if HAS_TELEMETRY && HAS_SENSOR && !MESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR
     if (moduleConfig.has_telemetry &&

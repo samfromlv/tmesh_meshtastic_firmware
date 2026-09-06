@@ -16,7 +16,7 @@
 // USB_CHECK
 #define EXT_PWR_DETECT 12
 #define BATTERY_PIN 8
-#define ADC_CHANNEL ADC1_GPIO8_CHANNEL
+#define ADC_CHANNEL ADC_CHANNEL_7
 
 #define ADC_MULTIPLIER 2.0
 
@@ -45,8 +45,8 @@
 
 #define PIN_GPS_STANDBY 11 // An output to wake GPS, low means allow sleep, high means force wake
 
-#define GPS_TX_PIN 20 // This is for bits going TOWARDS the CPU
-#define GPS_RX_PIN 19 // This is for bits going TOWARDS the GPS
+#define GPS_TX_PIN 20 // This is for bits going TOWARDS the GPS
+#define GPS_RX_PIN 19 // This is for bits going TOWARDS the CPU
 
 #define GPS_THREAD_INTERVAL 50
 
@@ -70,7 +70,8 @@
 
 #define USE_EINK
 // Note: this is really just backlight power
-#define PCA_PIN_EINK_EN 5 // This is the pin number on the GPIO expander
+#define PCA_PIN_EINK_EN 5         // This is the pin number on the GPIO expander
+#define GPIO_BACKLIGHT_DEFAULT_ON // matches the previous screen_brightness > 0 wake behaviour
 #define PIN_EINK_CS 39
 #define PIN_EINK_BUSY 42
 #define PIN_EINK_DC 40
