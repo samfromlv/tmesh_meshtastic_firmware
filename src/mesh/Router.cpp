@@ -1,6 +1,7 @@
 #include "Router.h"
 #include "Channels.h"
 #include "CryptoEngine.h"
+#include "FeatureFlags.h"
 #include "MeshRadio.h"
 #include "MeshService.h"
 #include "NodeDB.h"
@@ -71,6 +72,7 @@ Allocator<meshtastic_MeshPacket> &packetPool = staticPool;
 #endif
 
 static uint8_t bytes[MAX_LORA_PAYLOAD_LEN + 1] __attribute__((__aligned__));
+static bool isTmesh = false;
 
 static ChannelIndex getEffectiveChannelIndex(const meshtastic_MeshPacket *p)
 {
@@ -230,6 +232,9 @@ void resetRoutingAuthEvaluationCount()
 Router::Router() : concurrency::OSThread("Router"), fromRadioQueue(MAX_RX_FROMRADIO)
 {
     // This is called pre main(), don't touch anything here, the following code is not safe
+
+    isTmesh = moduleConfig.mqtt.enabled && strstr(moduleConfig.mqtt.address, tmesh_mqtt_address_part) != nullptr;
+    FeatureFlags::initialize();
 
     /* LOG_DEBUG("Size of NodeInfo %d", sizeof(NodeInfo));
     LOG_DEBUG("Size of SubPacket %d", sizeof(SubPacket));
@@ -1557,16 +1562,37 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
 #if USERPREFS_EVENT_MODE
         shouldIgnoreNonstandardPorts = true;
 #endif
-        if (shouldIgnoreNonstandardPorts && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
-            !IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP, meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
-                       meshtastic_PortNum_POSITION_APP, meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP,
-                       meshtastic_PortNum_TELEMETRY_APP, meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP,
-                       meshtastic_PortNum_KEY_VERIFICATION_APP, meshtastic_PortNum_WAYPOINT_APP,
-                       meshtastic_PortNum_STORE_FORWARD_APP, meshtastic_PortNum_TRACEROUTE_APP,
-                       meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP)) {
-            LOG_DEBUG("Ignore packet on non-standard portnum for CORE_PORTNUMS_ONLY");
-            cancelSending(p->from, p->id);
-            skipHandle = true;
+
+        if (shouldIgnoreNonstandardPorts && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
+            const bool useRestrictedRouting =
+                !(isTmesh && p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT);
+            const auto restrictedRoutingMode = FeatureFlags::restrictedRoutingMode();
+            const bool isAllowedPort =
+                useRestrictedRouting && restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN
+                    ? IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
+                                meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP)
+                : useRestrictedRouting &&
+                          restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_AND_ROUTING
+                    ? IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
+                                meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP,
+                                meshtastic_PortNum_ROUTING_APP)
+                : useRestrictedRouting && restrictedRoutingMode ==
+                          FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE
+                    ? IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
+                                meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP,
+                                meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TRACEROUTE_APP)
+                    : IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
+                                meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_POSITION_APP,
+                                meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP,
+                                meshtastic_PortNum_TELEMETRY_APP, meshtastic_PortNum_ADMIN_APP,
+                                meshtastic_PortNum_ALERT_APP, meshtastic_PortNum_KEY_VERIFICATION_APP,
+                                meshtastic_PortNum_WAYPOINT_APP, meshtastic_PortNum_STORE_FORWARD_APP,
+                                meshtastic_PortNum_TRACEROUTE_APP, meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
+            if (!isAllowedPort) {
+                LOG_DEBUG("Ignore packet on non-standard portnum for CORE_PORTNUMS_ONLY");
+                cancelSending(p->from, p->id);
+                skipHandle = true;
+            }
         }
 
 #if USERPREFS_BLOCK_POSITION_ON_EVENT_CHANNEL
