@@ -13,5 +13,7 @@ enum class RestrictedRoutingMode : uint8_t {
 
 void initialize();
 RestrictedRoutingMode restrictedRoutingMode();
+bool isTmesh();
+bool allowsTracerouteRouting(bool isMqttPacket);
 
 } // namespace FeatureFlags

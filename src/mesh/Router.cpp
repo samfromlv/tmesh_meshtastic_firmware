@@ -72,7 +72,6 @@ Allocator<meshtastic_MeshPacket> &packetPool = staticPool;
 #endif
 
 static uint8_t bytes[MAX_LORA_PAYLOAD_LEN + 1] __attribute__((__aligned__));
-static bool isTmesh = false;
 
 static ChannelIndex getEffectiveChannelIndex(const meshtastic_MeshPacket *p)
 {
@@ -233,7 +232,6 @@ Router::Router() : concurrency::OSThread("Router"), fromRadioQueue(MAX_RX_FROMRA
 {
     // This is called pre main(), don't touch anything here, the following code is not safe
 
-    isTmesh = moduleConfig.mqtt.enabled && strstr(moduleConfig.mqtt.address, tmesh_mqtt_address_part) != nullptr;
     FeatureFlags::initialize();
 
     /* LOG_DEBUG("Size of NodeInfo %d", sizeof(NodeInfo));
@@ -1565,7 +1563,8 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
 
         if (shouldIgnoreNonstandardPorts && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
             const bool useRestrictedRouting =
-                !(isTmesh && p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT);
+                                !(FeatureFlags::isTmesh() &&
+                                    p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT);
             const auto restrictedRoutingMode = FeatureFlags::restrictedRoutingMode();
             const bool isAllowedPort =
                 useRestrictedRouting && restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN

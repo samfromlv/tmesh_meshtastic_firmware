@@ -1,4 +1,5 @@
 #include "FloodingRouter.h"
+#include "FeatureFlags.h"
 #include "MeshTypes.h"
 #include "NodeDB.h"
 #include "configuration.h"
@@ -103,6 +104,13 @@ bool FloodingRouter::reprocessPacket(const meshtastic_MeshPacket *p)
         if (decodedState != DecodeState::DECODE_SUCCESS && decodedState != DecodeState::DECODE_OPAQUE)
             return false;
     }
+
+    if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY &&
+        p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+        p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP &&
+        !FeatureFlags::allowsTracerouteRouting(
+            p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT))
+        return false;
 
     if (nodeDB)
         nodeDB->updateFrom(*p);
