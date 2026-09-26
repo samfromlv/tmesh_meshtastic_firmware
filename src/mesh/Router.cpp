@@ -279,7 +279,6 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
     //         moduleConfig.traffic_management.router_preserve_hops && ...) { ... }
     // #endif
 
-
     // For subsequent hops, preserve hop_limit only when the previous relay is UNAMBIGUOUSLY a favorite
     // router. The relay_node byte is just the last byte of a 32-bit node number, so on a dense mesh it
     // collides; the old "first matching node wins" scan could preserve hops for the wrong node
@@ -930,11 +929,11 @@ DecodeState perhapsDecode(meshtastic_MeshPacket *p)
 {
     concurrency::LockGuard g(cryptLock);
 
-    //if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
-    //    !nodeInfoLiteHasUser(nodeDB->getMeshNode(p->from))) {
-    //    LOG_DEBUG("Node 0x%08x not in nodeDB, Rebroadcast KNOWN_ONLY ignores packet", p->from);
-    //    return DecodeState::DECODE_FAILURE;
-    //}
+    // if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
+    //     !nodeInfoLiteHasUser(nodeDB->getMeshNode(p->from))) {
+    //     LOG_DEBUG("Node 0x%08x not in nodeDB, Rebroadcast KNOWN_ONLY ignores packet", p->from);
+    //     return DecodeState::DECODE_FAILURE;
+    // }
 
     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag)
         return DecodeState::DECODE_SUCCESS; // If packet was already decoded just return
@@ -1563,30 +1562,31 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
 
         if (shouldIgnoreNonstandardPorts && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
             const bool useRestrictedRouting =
-                                !(FeatureFlags::isTmesh() &&
-                                    p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT);
+                !(FeatureFlags::isTmesh() && p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT);
             const auto restrictedRoutingMode = FeatureFlags::restrictedRoutingMode();
             const bool isAllowedPort =
-                useRestrictedRouting && restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN
+                useRestrictedRouting &&
+                        restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN
                     ? IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
                                 meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP)
                 : useRestrictedRouting &&
-                          restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_AND_ROUTING
+                        restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_AND_ROUTING
                     ? IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
                                 meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP,
                                 meshtastic_PortNum_ROUTING_APP)
-                : useRestrictedRouting && restrictedRoutingMode ==
-                          FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE
+                : useRestrictedRouting &&
+                        restrictedRoutingMode ==
+                            FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE
                     ? IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
                                 meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP,
                                 meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TRACEROUTE_APP)
                     : IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
                                 meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_POSITION_APP,
-                                meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP,
-                                meshtastic_PortNum_TELEMETRY_APP, meshtastic_PortNum_ADMIN_APP,
-                                meshtastic_PortNum_ALERT_APP, meshtastic_PortNum_KEY_VERIFICATION_APP,
-                                meshtastic_PortNum_WAYPOINT_APP, meshtastic_PortNum_STORE_FORWARD_APP,
-                                meshtastic_PortNum_TRACEROUTE_APP, meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
+                                meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TELEMETRY_APP,
+                                meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP,
+                                meshtastic_PortNum_KEY_VERIFICATION_APP, meshtastic_PortNum_WAYPOINT_APP,
+                                meshtastic_PortNum_STORE_FORWARD_APP, meshtastic_PortNum_TRACEROUTE_APP,
+                                meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
             if (!isAllowedPort) {
                 LOG_DEBUG("Ignore packet on non-standard portnum for CORE_PORTNUMS_ONLY");
                 cancelSending(p->from, p->id);
@@ -1724,7 +1724,9 @@ void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)
         packetPool.release(p);
         return;
     }
-    if (authVerdict == RoutingAuthVerdict::OPAQUE_RELAY_ONLY) {
+    if (authVerdict == RoutingAuthVerdict::OPAQUE_RELAY_ONLY
+        // need to upload to tmesh mqtt
+        && !(moduleConfig.mqtt.enabled && mqtt && FeatureFlags::isTmesh())) {
         // A packet we originated but cannot decrypt (a PKI DM we sent, overheard being rebroadcast)
         // is opaque to us and would otherwise skip shouldFilterReceived entirely, so the implicit
         // ACK that marks a DM "Delivered to mesh" never fires. The ACK is header-only (from/id), so
