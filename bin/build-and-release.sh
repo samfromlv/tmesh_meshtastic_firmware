@@ -6,15 +6,22 @@ RELEASE_DIR=".pio/release"
 
 # Clean previous release dir
 rm -rf "$RELEASE_DIR"
-#startFromTarget='picomputer-s3-tft'
+rm -rf ~/.platformio/platforms/espressif32
+rm -rf ~/.platformio/packages/framework-arduinoespressif32*
+#startFromTarget='rak11200'
 mkdir -p "$RELEASE_DIR"
 skipBuild=false
 skipTargetsCheck=false
 # Build all PlatformIO environments
 # Get list of targets from release_json_template.json
 
-TARGETS=$(jq -r '.targets[].board' bin/release_json_template.json)
+# Group by platform so consecutive builds reuse the same toolchain/framework packages
+TARGET_ROWS=$(jq -r '.targets | sort_by(.platform) | .[] | "\(.platform)\t\(.board)"' bin/release_json_template.json)
+TARGETS=$(printf '%s\n' "$TARGET_ROWS" | cut -f2)
 VERSION="$($(dirname "$0")/get_version.sh)"
+
+echo "Build order (grouped by platform):"
+jq -r '.targets | sort_by(.platform) | group_by(.platform)[] | "  \(.[0].platform): \(map(.board) | join(", "))"' bin/release_json_template.json
 
 if [ -z "$VERSION" ]; then
   echo "Error: Could not determine version from bin/get_version.sh"
@@ -55,7 +62,9 @@ else
   unset PLATFORMIO_BUILD_FLAGS
 fi
 
-for ENV in $TARGETS; do
+currentPlatform=""
+
+while IFS=$'\t' read -r PLATFORM ENV <&3; do
   echo "Building $ENV..."
 
   if [ -n "$startFromTarget" ]; then
@@ -66,6 +75,13 @@ for ENV in $TARGETS; do
       echo "Starting from target $startFromTarget..."
       startFromTarget=""
     fi
+  fi
+
+  if [ "$PLATFORM" != "$currentPlatform" ]; then
+    #echo "Entering platform $PLATFORM, purging espressif32 platform/framework packages..."
+    #rm -rf ~/.platformio/platforms/espressif32
+    #rm -rf ~/.platformio/packages/framework-arduinoespressif32*
+    currentPlatform="$PLATFORM"
   fi
 
   if [ "$skipBuild" = true ]; then
@@ -126,6 +142,6 @@ for ENV in $TARGETS; do
       -o -name '*.mt.json' \
       \) -exec rm -f {} +
   fi
-done
+done 3< <(printf '%s\n' "$TARGET_ROWS")
 
 echo "All firmware files are in $RELEASE_DIR, ready for S3 upload using bin/upload-release.sh."
