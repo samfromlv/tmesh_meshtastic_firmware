@@ -1725,8 +1725,12 @@ void Router::perhapsHandleReceived(meshtastic_MeshPacket *p)
         return;
     }
     if (authVerdict == RoutingAuthVerdict::OPAQUE_RELAY_ONLY
-        // need to upload to tmesh mqtt
-        && !(moduleConfig.mqtt.enabled && mqtt && FeatureFlags::isTmesh())) {
+       #if !MESHTASTIC_EXCLUDE_MQTT
+       // need to upload to tmesh mqtt
+       && !(moduleConfig.mqtt.enabled && mqtt && FeatureFlags::isTmesh()) 
+       #endif
+    )
+    {
         // A packet we originated but cannot decrypt (a PKI DM we sent, overheard being rebroadcast)
         // is opaque to us and would otherwise skip shouldFilterReceived entirely, so the implicit
         // ACK that marks a DM "Delivered to mesh" never fires. The ACK is header-only (from/id), so
