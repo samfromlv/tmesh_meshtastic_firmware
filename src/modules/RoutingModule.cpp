@@ -13,8 +13,9 @@ bool RoutingModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, mesh
     bool maybePKI = mp.which_payload_variant == meshtastic_MeshPacket_encrypted_tag && mp.channel == 0 && !isBroadcast(mp.to);
     // Beginning of logic whether to drop the packet based on Rebroadcast mode
     if (mp.which_payload_variant == meshtastic_MeshPacket_encrypted_tag &&
-        (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY ||
-         config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY)) {
+        (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY
+        // || config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY
+        )) {
         if (!maybePKI)
             return false;
         if (!nodeInfoLiteHasUser(nodeDB->getMeshNode(mp.from)) && !nodeInfoLiteHasUser(nodeDB->getMeshNode(mp.to)))
