@@ -35,7 +35,15 @@ if [ "$skipTargetsCheck" = true ]; then
   echo "Skipping PlatformIO environment check for targets."
 else
   echo "Checking that all targets exist in PlatformIO environments..."
+  checkStartFromTarget="$startFromTarget"
   for ENV in $TARGETS; do
+    if [[ -n "$checkStartFromTarget" ]]; then
+      if [[ "$ENV" != "$checkStartFromTarget" ]]; then
+        echo "Skipping check for $ENV until we reach $checkStartFromTarget..."
+        continue
+      fi
+      checkStartFromTarget=""
+    fi
     if ! platformio run --list-targets -e "$ENV" >/dev/null 2>&1; then
       echo "Error: PlatformIO environment '$ENV' does not exist!"
       MISSING_ENVS="$MISSING_ENVS $ENV"
