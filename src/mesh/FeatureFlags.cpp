@@ -6,7 +6,8 @@
 
 #include <string.h>
 
-namespace FeatureFlags {
+namespace FeatureFlags
+{
 
 static RestrictedRoutingMode cachedRestrictedRoutingMode = RestrictedRoutingMode::STANDARD_CORE_PORTS;
 static bool cachedIsTmesh;
@@ -28,6 +29,13 @@ void initialize()
                     break;
                 case '3':
                     cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE;
+                    break;
+                case '4':
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_AND_ROUTING;
+                    break;
+                case '5':
+                    cachedRestrictedRoutingMode =
+                        RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE;
                     break;
                 default:
                     continue;
@@ -52,8 +60,8 @@ bool isTmesh()
 
 bool allowsTracerouteRouting(bool isMqttPacket)
 {
-    return (cachedIsTmesh && isMqttPacket) ||
-           cachedRestrictedRoutingMode == RestrictedRoutingMode::STANDARD_CORE_PORTS ||
+    return (cachedIsTmesh && isMqttPacket) || cachedRestrictedRoutingMode == RestrictedRoutingMode::STANDARD_CORE_PORTS ||
+           cachedRestrictedRoutingMode == RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE ||
            cachedRestrictedRoutingMode == RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE;
 }
 
