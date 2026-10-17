@@ -261,20 +261,23 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
         return true; // Always decrement on first hop
     }
 
+    const auto hopDecrementMode = FeatureFlags::hopDecrementMode();
+    if (hopDecrementMode == FeatureFlags::HopDecrementMode::DECREMENT_FIRST_HOP_ONLY)
+        return false;
+    const bool preserveAfterAnyFavorite = hopDecrementMode == FeatureFlags::HopDecrementMode::PRESERVE_AFTER_ANY_FAVORITE_RELAY;
+
     // Check if both local device and previous relay are routers (including CLIENT_BASE)
     bool localIsRouter =
         IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_ROUTER, meshtastic_Config_DeviceConfig_Role_ROUTER_LATE,
                   meshtastic_Config_DeviceConfig_Role_CLIENT_BASE);
 
-    // If local device isn't a router, always decrement
-    if (!localIsRouter) {
+    if (!preserveAfterAnyFavorite && !localIsRouter) {
         return true;
     }
 
-    if (moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-        (moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY ||
-         moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_ONLY) &&
-        moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) {
+    if (!preserveAfterAnyFavorite &&
+        FeatureFlags::favoriteRouterMode() != FeatureFlags::FavoriteRouterMode::FAVORITE_ROUTER_DISABLED &&
+        FeatureFlags::favoriteRouterRelay() == p->relay_node) {
         return false; // Don't decrement if previous relay is the configured favorite router
     }
     // router_preserve_hops: not suitable right now - removed from config until
@@ -288,15 +291,17 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
     // router. The relay_node byte is just the last byte of a 32-bit node number, so on a dense mesh it
     // collides; the old "first matching node wins" scan could preserve hops for the wrong node
     // (non-deterministic, depends on NodeDB order). resolveLastByte() reports a collision instead, and
-    // we re-check the favorite/router predicate on the single resolved node. On ambiguity/none we
+    // we re-check the favorite/role predicate on the single resolved node (h0 ignores roles). On ambiguity/none we
     // decrement (the safe default).
     NodeNum resolved = 0;
     if (nodeDB->resolveUniqueLastByte(p->relay_node, /*requireDirectNeighbor=*/false, &resolved)) {
         const meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(resolved);
-        if (node && nodeInfoLiteIsFavorite(node) && nodeInfoLiteHasUser(node) &&
-            IS_ONE_OF(node->role, meshtastic_Config_DeviceConfig_Role_ROUTER, meshtastic_Config_DeviceConfig_Role_ROUTER_LATE,
-                      meshtastic_Config_DeviceConfig_Role_CLIENT_BASE)) {
-            LOG_DEBUG("Unique favorite relay router 0x%08x from last byte 0x%x", resolved, p->relay_node);
+        if (node && nodeInfoLiteIsFavorite(node) &&
+            (preserveAfterAnyFavorite ||
+             (nodeInfoLiteHasUser(node) &&
+              IS_ONE_OF(node->role, meshtastic_Config_DeviceConfig_Role_ROUTER, meshtastic_Config_DeviceConfig_Role_ROUTER_LATE,
+                        meshtastic_Config_DeviceConfig_Role_CLIENT_BASE)))) {
+            LOG_DEBUG("Unique favorite relay 0x%08x from last byte 0x%x", resolved, p->relay_node);
             return false; // Don't decrement hop_limit
         }
     }

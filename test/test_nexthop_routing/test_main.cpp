@@ -2,6 +2,14 @@
 //   M1 - NodeDB::resolveLastByte / resolveUniqueLastByte (ambiguity-aware last-byte resolution)
 //   M2 - NextHopRouter::getNextHop strict-neighbor gate + Router::shouldDecrementHopLimit favorite check
 //   M3 - NextHopRouter route-health freshness / failure decay
+// FeatureFlags::initialize() in src/mesh/FeatureFlags.cpp must parse whole underscore-delimited
+// values without interpreting future flags' contents as routing/hop flags, and reset cached modes.
+// Router::shouldDecrementHopLimit() in src/mesh/Router.cpp must always decrement the first hop;
+// h0 removes role restrictions for favorite relays, while h1 preserves every subsequent hop.
+// These cases guard against token-prefix matches, stale modes and role checks overriding hop flags.
+// The n0/n1/n2 and f0/f1 flags replace Paxcounter-based routing overrides. Their mode and hex relay
+// byte must survive parsing into the originating-send, rebroadcast, retry and duplicate-relay paths;
+// otherwise a valid flag can be ignored or apply to the wrong relay or packet class.
 //
 // Time handling: the route-health helpers take `now` as a parameter so the 30-minute TTL logic is
 // pure and testable without a clock mock. getNextHop()/sinceLastSeen() use the real native clock;
@@ -15,6 +23,7 @@
 #include "configuration.h"
 #include "gps/RTC.h"
 #include "mesh/Default.h"
+#include "mesh/FeatureFlags.h"
 #include "mesh/NextHopRouter.h"
 #include "mesh/NodeDB.h"
 #include "mesh/RadioInterface.h"
@@ -94,6 +103,8 @@ class NextHopRouterTestShim : public NextHopRouter
         cryptLock = nullptr;
     }
 
+    using FloodingRouter::perhapsCancelDupe;
+    using FloodingRouter::roleAllowsCancelingDupe;
     using NextHopRouter::clearRouteHealth;
     using NextHopRouter::findRouteHealth;
     using NextHopRouter::getNextHop;
@@ -165,6 +176,13 @@ class NextHopRouterTestShim : public NextHopRouter
 class MockRadioInterface : public RadioInterface
 {
   public:
+    void clampToLateRebroadcastWindow(NodeNum from, PacketId id) override
+    {
+        (void)from;
+        (void)id;
+        clampCount++;
+    }
+
     ErrorCode send(meshtastic_MeshPacket *p) override
     {
         sendCount++;
@@ -193,6 +211,7 @@ class MockRadioInterface : public RadioInterface
 
     int sendCount = 0;
     uint32_t cancelCount = 0;
+    uint32_t clampCount = 0;
     bool declineAll = false;
     uint8_t lastHopLimit = 0;
     uint8_t lastHopStart = 0;
@@ -412,6 +431,10 @@ static meshtastic_MeshPacket *allocBehaviorPacket(meshtastic_PortNum portnum, No
 
 void setUp(void)
 {
+    moduleConfig.detection_sensor.enabled = false;
+    moduleConfig.detection_sensor.name[0] = '\0';
+    moduleConfig.has_paxcounter = false;
+    FeatureFlags::initialize();
     myNodeInfo.my_node_num = kLocalNode;
     config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT;
     config.device.rebroadcast_mode = meshtastic_Config_DeviceConfig_RebroadcastMode_ALL;
@@ -429,7 +452,12 @@ void setUp(void)
     configureBehaviorChannels();
 }
 
-void tearDown(void) {}
+void tearDown(void)
+{
+    moduleConfig.detection_sensor.enabled = false;
+    moduleConfig.detection_sensor.name[0] = '\0';
+    FeatureFlags::initialize();
+}
 
 // ===========================================================================
 // Group 1 - resolveLastByte (M1)
@@ -707,6 +735,253 @@ void test_health_success_never_stores_zero_sentinel(void)
 // ===========================================================================
 // Group 4 - shouldDecrementHopLimit favorite-router resolution (M2, site 4)
 // ===========================================================================
+
+static void configureFeatureFlags(const char *flags)
+{
+    snprintf(moduleConfig.detection_sensor.name, sizeof(moduleConfig.detection_sensor.name), "%s", flags);
+    FeatureFlags::initialize();
+}
+
+void test_featureFlags_parse_independent_tokens(void)
+{
+    configureFeatureFlags("_tr1_h0");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() ==
+                     FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN);
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::PRESERVE_AFTER_ANY_FAVORITE_RELAY);
+
+    configureFeatureFlags("_th1_x4ac_r5");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() ==
+                     FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE);
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::DECREMENT_FIRST_HOP_ONLY);
+}
+
+void test_featureFlags_require_whole_tokens(void)
+{
+    const char *invalidFlags[] = {"_tfh1r1", "_th10_r12", "_th9_r9", "h1_r1", "_xh1_r1", "_t"};
+    for (const char *flags : invalidFlags) {
+        configureFeatureFlags(flags);
+        TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS);
+        TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::STANDARD_FAVORITE_ROUTER_BEHAVIOR);
+    }
+
+    memset(moduleConfig.detection_sensor.name, 'x', sizeof(moduleConfig.detection_sensor.name));
+    memcpy(moduleConfig.detection_sensor.name, "_th1", 4);
+    FeatureFlags::initialize();
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::STANDARD_FAVORITE_ROUTER_BEHAVIOR);
+}
+
+void test_featureFlags_reinitialize_resets_modes(void)
+{
+    configureFeatureFlags("_tr1_h1");
+    configureFeatureFlags("_tx4ac");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS);
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::STANDARD_FAVORITE_ROUTER_BEHAVIOR);
+
+    configureFeatureFlags("_tr1_h0");
+    moduleConfig.detection_sensor.enabled = true;
+    FeatureFlags::initialize();
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS);
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::STANDARD_FAVORITE_ROUTER_BEHAVIOR);
+}
+
+void test_hoplimit_h0_ignores_local_and_favorite_roles(void)
+{
+    configureFeatureFlags("_tr1_h0");
+    mockNodeDB->addNode(0x000007AB, 2, true, 60, meshtastic_Config_DeviceConfig_Role_CLIENT, /*favorite=*/true);
+    auto p = makeRelayedPacket(0xAB, 1);
+    TEST_ASSERT_FALSE(shim->shouldDecrementHopLimit(&p));
+
+    nodeInfoLiteSetBit(&mockNodeDB->testNodes[0], NODEINFO_BITFIELD_HAS_USER_MASK, false);
+    TEST_ASSERT_FALSE(shim->shouldDecrementHopLimit(&p));
+    p = makeRelayedPacket(0xAB, 0);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+}
+
+void test_hoplimit_h0_decrements_without_unique_favorite(void)
+{
+    configureFeatureFlags("_th0");
+    auto p = makeRelayedPacket(0xAB, 1);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+    mockNodeDB->addNode(0x000007AB, 0, true, 60);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+    mockNodeDB->addNode(0x000008AB, 0, true, 60, meshtastic_Config_DeviceConfig_Role_CLIENT, /*favorite=*/true);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+}
+
+void test_hoplimit_h1_only_decrements_first_hop(void)
+{
+    configureFeatureFlags("_th1");
+    auto p = makeRelayedPacket(0xAB, 0);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+    for (uint8_t hopsAway = 1; hopsAway <= 4; hopsAway++) {
+        p = makeRelayedPacket(0xAB, hopsAway);
+        TEST_ASSERT_FALSE(shim->shouldDecrementHopLimit(&p));
+    }
+}
+
+void test_hoplimit_default_keeps_role_restrictions(void)
+{
+    mockNodeDB->addNode(0x000007AB, 0, true, 60, meshtastic_Config_DeviceConfig_Role_ROUTER, /*favorite=*/true);
+    auto p = makeRelayedPacket(0xAB, 1);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+    config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
+    mockNodeDB->testNodes[0].role = meshtastic_Config_DeviceConfig_Role_CLIENT;
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+}
+
+void test_featureFlags_parse_relay_modes_and_hex_bytes(void)
+{
+    configureFeatureFlags("_tr1_h0_n0ab_f1CD");
+    TEST_ASSERT_TRUE(FeatureFlags::forceNextHopMode() == FeatureFlags::ForceNextHopMode::LOCAL_PACKETS_WITH_FLOODING_FALLBACK);
+    TEST_ASSERT_EQUAL_HEX8(0xAB, FeatureFlags::forceNextHopRelay());
+    TEST_ASSERT_TRUE(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY);
+    TEST_ASSERT_EQUAL_HEX8(0xCD, FeatureFlags::favoriteRouterRelay());
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::PRESERVE_AFTER_ANY_FAVORITE_RELAY);
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() ==
+                     FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN);
+
+    configureFeatureFlags("_tn1ff_f001");
+    TEST_ASSERT_TRUE(FeatureFlags::forceNextHopMode() ==
+                     FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, FeatureFlags::forceNextHopRelay());
+    TEST_ASSERT_TRUE(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_ONLY);
+    TEST_ASSERT_EQUAL_HEX8(0x01, FeatureFlags::favoriteRouterRelay());
+    configureFeatureFlags("_tn201");
+    TEST_ASSERT_TRUE(FeatureFlags::forceNextHopMode() ==
+                     FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK);
+    TEST_ASSERT_EQUAL_HEX8(0x01, FeatureFlags::forceNextHopRelay());
+}
+
+void test_featureFlags_reject_invalid_relay_flags_and_reset(void)
+{
+    const char *invalidFlags[] = {"_tn0",  "_tn0a",   "_tn0abc", "_tn3ab", "_tn0gg", "_tn000",     "_tf0",
+                                  "_tf0a", "_tf0abc", "_tf2ab",  "_tf1g0", "_tf100", "_txn0abf1cd"};
+    for (const char *flags : invalidFlags) {
+        configureFeatureFlags("_tn0ab_f1cd");
+        configureFeatureFlags(flags);
+        TEST_ASSERT_TRUE(FeatureFlags::forceNextHopMode() == FeatureFlags::ForceNextHopMode::FORCE_NEXT_HOP_DISABLED);
+        TEST_ASSERT_EQUAL_HEX8(0, FeatureFlags::forceNextHopRelay());
+        TEST_ASSERT_TRUE(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::FAVORITE_ROUTER_DISABLED);
+        TEST_ASSERT_EQUAL_HEX8(0, FeatureFlags::favoriteRouterRelay());
+    }
+    configureFeatureFlags("_tn0ab_f1cd");
+    moduleConfig.detection_sensor.enabled = true;
+    FeatureFlags::initialize();
+    TEST_ASSERT_TRUE(FeatureFlags::forceNextHopMode() == FeatureFlags::ForceNextHopMode::FORCE_NEXT_HOP_DISABLED);
+    TEST_ASSERT_TRUE(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::FAVORITE_ROUTER_DISABLED);
+}
+
+void test_forceNextHop_originates_all_modes_without_overwriting_explicit_hop(void)
+{
+    const char *flags[] = {"_tn0ab", "_tn1ab", "_tn2ab"};
+    for (const char *flag : flags) {
+        configureFeatureFlags(flag);
+        auto p = makeRebroadcastCandidate(NODENUM_BROADCAST);
+        p.from = kLocalNode;
+        p.id = nextBehaviorPacketId++;
+        reliableRadio->reset();
+        TEST_ASSERT_EQUAL(ERRNO_OK, reliableShim->send(packetPool.allocCopy(p)));
+        TEST_ASSERT_EQUAL_UINT32(1, reliableRadio->sentPackets.size());
+        TEST_ASSERT_EQUAL_HEX8(0xAB, reliableRadio->sentPackets.back().next_hop);
+
+        p.next_hop = 0xCD;
+        p.id = nextBehaviorPacketId++;
+        TEST_ASSERT_EQUAL(ERRNO_OK, reliableShim->send(packetPool.allocCopy(p)));
+        TEST_ASSERT_EQUAL_HEX8(0xCD, reliableRadio->sentPackets.back().next_hop);
+    }
+}
+
+void test_forceNextHop_rebroadcast_only_in_relay_modes(void)
+{
+    auto *radio = installMockIface();
+    const char *flags[] = {"_tn0ab", "_tn1ab", "_tn2ab"};
+    for (size_t index = 0; index < 3; index++) {
+        configureFeatureFlags(flags[index]);
+        auto p = makeRebroadcastCandidate(NODENUM_BROADCAST);
+        p.id = nextBehaviorPacketId++;
+        TEST_ASSERT_TRUE(shim->perhapsRebroadcast(&p));
+        TEST_ASSERT_EQUAL_HEX8(index == 0 ? NO_NEXT_HOP_PREFERENCE : 0xAB, radio->sentNextHops.back());
+    }
+}
+
+void test_forceNextHop_broadcast_last_retry_fallback_depends_on_mode(void)
+{
+    auto *radio = installMockIface();
+    const char *flags[] = {"_tn0ab", "_tn1ab", "_tn2ab"};
+    for (size_t index = 0; index < 3; index++) {
+        configureFeatureFlags(flags[index]);
+        auto p = makeRebroadcastCandidate(NODENUM_BROADCAST);
+        p.from = kLocalNode;
+        p.id = nextBehaviorPacketId++;
+        p.next_hop = 0xAB;
+        shim->trackForTest(p, 2);
+        shim->fireNextRetryForTest(p.from, p.id);
+        TEST_ASSERT_EQUAL_HEX8(index == 2 ? 0xAB : NO_NEXT_HOP_PREFERENCE, radio->sentNextHops.back());
+        shim->stopForTest(p.from, p.id);
+    }
+}
+
+void test_favoriteRouter_preserves_hops_for_configured_relay_only(void)
+{
+    config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
+    const char *flags[] = {"_tf0ab", "_tf1ab"};
+    for (const char *flag : flags) {
+        configureFeatureFlags(flag);
+        auto p = makeRelayedPacket(0xAB, 1);
+        TEST_ASSERT_FALSE(shim->shouldDecrementHopLimit(&p));
+        p = makeRelayedPacket(0xCD, 1);
+        TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+        p = makeRelayedPacket(0xAB, 0);
+        TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+        config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT;
+        p = makeRelayedPacket(0xAB, 1);
+        TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+        config.device.role = meshtastic_Config_DeviceConfig_Role_ROUTER;
+    }
+}
+
+void test_favoriteRouter_relay_mode_controls_duplicate_and_late_window(void)
+{
+    auto *radio = installMockIface();
+    config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT_BASE;
+    auto p = makeRebroadcastCandidate(NODENUM_BROADCAST);
+    p.relay_node = 0xAB;
+    configureFeatureFlags("_tf0ab");
+    TEST_ASSERT_TRUE(shim->roleAllowsCancelingDupe(&p));
+    shim->perhapsCancelDupe(&p);
+    TEST_ASSERT_EQUAL_UINT32(0, radio->clampCount);
+
+    configureFeatureFlags("_tf1ab");
+    TEST_ASSERT_FALSE(shim->roleAllowsCancelingDupe(&p));
+    shim->perhapsCancelDupe(&p);
+    TEST_ASSERT_EQUAL_UINT32(1, radio->clampCount);
+    p.relay_node = 0xCD;
+    TEST_ASSERT_TRUE(shim->roleAllowsCancelingDupe(&p));
+    shim->perhapsCancelDupe(&p);
+    TEST_ASSERT_EQUAL_UINT32(1, radio->clampCount);
+}
+
+void test_legacyPaxcounter_no_longer_configures_routing(void)
+{
+    auto *radio = installMockIface();
+    moduleConfig.has_paxcounter = true;
+    moduleConfig.paxcounter.enabled = false;
+    moduleConfig.paxcounter.ble_threshold = 3;
+    moduleConfig.paxcounter.wifi_threshold = 0xAB;
+    FeatureFlags::initialize();
+    auto p = makeRebroadcastCandidate(NODENUM_BROADCAST);
+    TEST_ASSERT_TRUE(shim->perhapsRebroadcast(&p));
+    TEST_ASSERT_EQUAL_HEX8(NO_NEXT_HOP_PREFERENCE, radio->sentNextHops.back());
+    p.from = kLocalNode;
+    TEST_ASSERT_EQUAL(ERRNO_OK, reliableShim->send(packetPool.allocCopy(p)));
+    TEST_ASSERT_EQUAL_HEX8(NO_NEXT_HOP_PREFERENCE, reliableRadio->sentPackets.back().next_hop);
+
+    moduleConfig.paxcounter.ble_threshold = 11;
+    config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT_BASE;
+    p = makeRelayedPacket(0xAB, 1);
+    TEST_ASSERT_TRUE(shim->shouldDecrementHopLimit(&p));
+    TEST_ASSERT_TRUE(shim->roleAllowsCancelingDupe(&p));
+}
 
 void test_hoplimit_preserve_unique_favorite_router(void)
 {
@@ -1129,6 +1404,13 @@ void setup()
     RUN_TEST(test_health_success_never_stores_zero_sentinel);
 
     printf("\n=== shouldDecrementHopLimit (M2 site 4) ===\n");
+    RUN_TEST(test_featureFlags_parse_independent_tokens);
+    RUN_TEST(test_featureFlags_require_whole_tokens);
+    RUN_TEST(test_featureFlags_reinitialize_resets_modes);
+    RUN_TEST(test_hoplimit_h0_ignores_local_and_favorite_roles);
+    RUN_TEST(test_hoplimit_h0_decrements_without_unique_favorite);
+    RUN_TEST(test_hoplimit_h1_only_decrements_first_hop);
+    RUN_TEST(test_hoplimit_default_keeps_role_restrictions);
     RUN_TEST(test_hoplimit_preserve_unique_favorite_router);
     RUN_TEST(test_hoplimit_decrement_on_colliding_favorites);
     RUN_TEST(test_hoplimit_decrement_when_resolved_not_favorite);
@@ -1159,6 +1441,16 @@ void setup()
 #if USERPREFS_EVENT_MODE
     RUN_TEST(test_event_mode_hop_behavior);
 #endif
+
+    printf("\n=== force next hop and favorite router feature flags ===\n");
+    RUN_TEST(test_featureFlags_parse_relay_modes_and_hex_bytes);
+    RUN_TEST(test_featureFlags_reject_invalid_relay_flags_and_reset);
+    RUN_TEST(test_forceNextHop_originates_all_modes_without_overwriting_explicit_hop);
+    RUN_TEST(test_forceNextHop_rebroadcast_only_in_relay_modes);
+    RUN_TEST(test_forceNextHop_broadcast_last_retry_fallback_depends_on_mode);
+    RUN_TEST(test_favoriteRouter_preserves_hops_for_configured_relay_only);
+    RUN_TEST(test_favoriteRouter_relay_mode_controls_duplicate_and_late_window);
+    RUN_TEST(test_legacyPaxcounter_no_longer_configures_routing);
 
     int result = UNITY_END();
     airTimeFixture.reset();

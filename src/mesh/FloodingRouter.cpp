@@ -108,8 +108,7 @@ bool FloodingRouter::reprocessPacket(const meshtastic_MeshPacket *p)
     if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY &&
         p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
         p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP &&
-        !FeatureFlags::allowsTracerouteRouting(
-            p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT))
+        !FeatureFlags::allowsTracerouteRouting(p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT))
         return false;
 
     if (nodeDB)
@@ -137,9 +136,8 @@ bool FloodingRouter::roleAllowsCancelingDupe(const meshtastic_MeshPacket *p)
         // CLIENT_BASE: if the packet is from or to a favorited node,
         // we should act like a ROUTER and should never cancel a rebroadcast (i.e. we should always rebroadcast),
         // even if we've heard another station rebroadcast it already.
-        return !(moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-                 moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY &&
-                 moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) &&
+        return !(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
+                 FeatureFlags::favoriteRouterRelay() == p->relay_node) &&
                !nodeDB->isFromOrToFavoritedNode(*p);
     }
 
@@ -160,9 +158,8 @@ void FloodingRouter::perhapsCancelDupe(const meshtastic_MeshPacket *p)
     }
 
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface &&
-        ((moduleConfig.has_paxcounter && !moduleConfig.paxcounter.enabled &&
-          moduleConfig.paxcounter.ble_threshold == FAVORITE_ROUTER_MODE_HOPS_AND_RELAY &&
-          moduleConfig.paxcounter.wifi_threshold > 0 && moduleConfig.paxcounter.wifi_threshold == p->relay_node) ||
+        ((FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
+          FeatureFlags::favoriteRouterRelay() == p->relay_node) ||
          (nodeDB && nodeDB->isFromOrToFavoritedNode(*p)))) {
 
         LOG_DEBUG("Clamping packet 0x%08x from favorite node 0x%08x to late rebroadcast window", p->id, getFrom(p));
