@@ -222,6 +222,10 @@
             "platform": "nrf52840"
         },
         {
+            "board": "gat562_mesh_tracker_pro",
+            "platform": "nrf52840"
+        },
+        {
             "board": "CDEBYTE_EoRa-S3",
             "platform": "esp32s3"
         },
