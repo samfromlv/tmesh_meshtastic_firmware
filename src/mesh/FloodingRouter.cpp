@@ -1,4 +1,5 @@
 #include "FloodingRouter.h"
+#include "FeatureFlags.h"
 #include "MeshTypes.h"
 #include "NodeDB.h"
 #include "configuration.h"
@@ -72,7 +73,9 @@ bool FloodingRouter::perhapsHandleUpgradedPacket(const meshtastic_MeshPacket *p)
         return true;
 
     // isRebroadcaster() is duplicated in perhapsRebroadcast(), but this avoids confusing log messages
-    if (isRebroadcaster() && iface && p->hop_limit > 0) {
+    if (isRebroadcaster() && iface && p->hop_limit > 0 &&
+        (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY ||
+         (nodeDB->getMeshNode(p->from) != nullptr && nodeInfoLiteIsFavorite(nodeDB->getMeshNode(p->from))))) {
         // Verify the replacement before deleting the valid lower-hop copy waiting in the TX queue.
         // This is intentionally redundant with ReliableRouter's ingress gate: it keeps this helper
         // safe if another caller is introduced later.
@@ -112,6 +115,12 @@ bool FloodingRouter::reprocessPacket(const meshtastic_MeshPacket *p)
             return false;
     }
 
+    if (config.device.rebroadcast_mode == meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY &&
+        p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+        p->decoded.portnum == meshtastic_PortNum_TRACEROUTE_APP &&
+        !FeatureFlags::allowsTracerouteRouting(p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT))
+        return false;
+
     if (nodeDB)
         nodeDB->updateFrom(*p);
 
@@ -137,7 +146,9 @@ bool FloodingRouter::roleAllowsCancelingDupe(const meshtastic_MeshPacket *p)
         // CLIENT_BASE: if the packet is from or to a favorited node,
         // we should act like a ROUTER and should never cancel a rebroadcast (i.e. we should always rebroadcast),
         // even if we've heard another station rebroadcast it already.
-        return !nodeDB->isFromOrToFavoritedNode(*p);
+        return !(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
+                 FeatureFlags::favoriteRouterRelay() == p->relay_node) &&
+               !nodeDB->isFromOrToFavoritedNode(*p);
     }
 
     // All other roles (such as CLIENT) should cancel a rebroadcast if they hear another station's rebroadcast.
@@ -155,8 +166,13 @@ void FloodingRouter::perhapsCancelDupe(const meshtastic_MeshPacket *p)
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE && iface) {
         iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
     }
-    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface && nodeDB &&
-        nodeDB->isFromOrToFavoritedNode(*p)) {
+
+    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface &&
+        ((FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
+          FeatureFlags::favoriteRouterRelay() == p->relay_node) ||
+         (nodeDB && nodeDB->isFromOrToFavoritedNode(*p)))) {
+
+        LOG_DEBUG("Clamping packet 0x%08x from favorite node 0x%08x to late rebroadcast window", p->id, getFrom(p));
         iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
     }
 }

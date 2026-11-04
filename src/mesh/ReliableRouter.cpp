@@ -1,6 +1,7 @@
 #include "ReliableRouter.h"
 #include "AckProof.h"
 #include "Default.h"
+#include "FeatureFlags.h"
 #include "MeshTypes.h"
 #include "NodeDB.h"
 #include "UptimeClock.h"
@@ -18,6 +19,12 @@
  */
 ErrorCode ReliableRouter::send(meshtastic_MeshPacket *p)
 {
+    if (p->next_hop == NO_NEXT_HOP_PREFERENCE &&
+        FeatureFlags::forceNextHopMode() != FeatureFlags::ForceNextHopMode::FORCE_NEXT_HOP_DISABLED) {
+
+        p->next_hop = FeatureFlags::forceNextHopRelay();
+        LOG_DEBUG("RRSend - Forcing next hop to 0x%x due to feature flags", p->next_hop);
+    }
     if (isBlockedEventCoordinatePacket(p)) {
         LOG_DEBUG("Suppress reliable coordinate send on event (everyone) channel");
         packetPool.release(p);

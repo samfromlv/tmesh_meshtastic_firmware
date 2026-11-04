@@ -1,5 +1,6 @@
 #include "NextHopRouter.h"
 #include "Default.h"
+#include "FeatureFlags.h"
 #include "MeshTypes.h"
 #include "Throttle.h"
 #include "UptimeClock.h"
@@ -264,7 +265,9 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
     // Allow rebroadcast if hop_limit > 0 OR if we're exhausting hops (which sets hop_limit = 0 but still needs one relay)
     if (!isToUs(p) && !isFromUs(p) && (p->hop_limit > 0 || exhaustHops)) {
         if (p->id != 0) {
-            if (isRebroadcaster()) {
+            if (isRebroadcaster() &&
+                (config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY ||
+                 (nodeDB->getMeshNode(p->from) != nullptr && nodeInfoLiteIsFavorite(nodeDB->getMeshNode(p->from))))) {
                 // NOTE: this is a self-identity match (is the addressed next_hop OUR last byte?), so it
                 // cannot be hardened with resolveLastByte() - a remote node that legitimately shares our
                 // last byte will also match here and rebroadcast. That residual collision needs a wider
@@ -290,8 +293,19 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
                     capEventRelayHops(tosend);
 #endif
 
-                    ErrorCode res =
-                        (p->next_hop == NO_NEXT_HOP_PREFERENCE) ? FloodingRouter::send(tosend) : NextHopRouter::send(tosend);
+                    ErrorCode res;
+                    if (p->next_hop == NO_NEXT_HOP_PREFERENCE) {
+                        const auto forceNextHopMode = FeatureFlags::forceNextHopMode();
+                        if (forceNextHopMode ==
+                                FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK ||
+                            forceNextHopMode == FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK) {
+                            tosend->next_hop = FeatureFlags::forceNextHopRelay();
+                            LOG_DEBUG("NHR rebroadcast - Forcing next hop to 0x%x due to feature flags", tosend->next_hop);
+                        }
+                        res = FloodingRouter::send(tosend);
+                    } else {
+                        res = NextHopRouter::send(tosend);
+                    }
                     if (res == ERRNO_SHOULD_RELEASE)
                         packetPool.release(tosend);
 
@@ -536,6 +550,14 @@ int32_t NextHopRouter::doRetransmissions()
 #endif
                     }
                 } else {
+                    if (p.packet->next_hop != NO_NEXT_HOP_PREFERENCE && p.numRetransmissions == 1 &&
+                        (FeatureFlags::forceNextHopMode() ==
+                             FeatureFlags::ForceNextHopMode::LOCAL_PACKETS_WITH_FLOODING_FALLBACK ||
+                         FeatureFlags::forceNextHopMode() ==
+                             FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK)) {
+                        LOG_DEBUG("Feature flags: resetting next hop to no pref for last retransmission");
+                        p.packet->next_hop = NO_NEXT_HOP_PREFERENCE;
+                    }
                     // Note: we call the superclass version because we don't want to have our version of send() add a new
                     // retransmission record
                     if (auto *copy = packetPool.allocCopy(*p.packet)) {
