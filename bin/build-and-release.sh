@@ -101,14 +101,14 @@ while IFS=$'\t' read -r PLATFORM ENV <&3; do
 
   BUILD_DIR=".pio/build/$ENV"
   if [ -d "$BUILD_DIR" ]; then
-    echo "Collecting firmware files for $ENV..."
+    echo "Collecting firmware files for $ENV at version $VERSION..."
     collected_files=()
     while IFS= read -r -d '' f; do
       collected_files+=("$f")
       base=$(basename "$f")
       echo "Copying $f -> $RELEASE_DIR/$base"
       cp "$f" "$RELEASE_DIR/$base"
-    done < <(find "$BUILD_DIR" -type f \
+    done < <(find "$BUILD_DIR" -type f -name "*${VERSION}*" \
       \( -name 'firmware-*.bin' \
       -o -name 'firmware-*.uf2' \
       -o -name 'firmware-*.hex' \
@@ -131,7 +131,7 @@ while IFS=$'\t' read -r PLATFORM ENV <&3; do
       echo "Copying $target_zip -> $RELEASE_DIR/$base"
       cp "$target_zip" "$RELEASE_DIR/$base"
     else
-      echo "No collectible files found for $ENV, skipping archive creation."
+      echo "No collectible files found for $ENV at version $VERSION, skipping archive creation."
     fi
 
     echo "Cleaning up $BUILD_DIR, keeping only firmware files..."
