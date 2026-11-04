@@ -794,7 +794,7 @@ void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_Me
         LOG_DEBUG("MQTT onSend - Skip publish for recent id=%u", mp_encrypted.id);
         return; // Don't send messages that came from MQTT back into MQTT
     }
-    #if USERPREFS_BLOCK_POSITION_ON_EVENT_CHANNEL
+#if USERPREFS_BLOCK_POSITION_ON_EVENT_CHANNEL
     if (isBlockedEventCoordinatePacket(&mp_decoded)) {
         LOG_DEBUG("MQTT onSend - Suppress coordinate packet on event channel");
         return;
