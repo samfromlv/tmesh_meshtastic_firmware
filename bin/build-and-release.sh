@@ -4,24 +4,42 @@ set -e
 
 RELEASE_DIR=".pio/release"
 
+#startFromTarget='m5stack-core'
+skipBuild=false
+skipTargetsCheck=false
+#onlyTarget="heltec-v4"
 # Clean previous release dir
 rm -rf "$RELEASE_DIR"
 rm -rf ~/.platformio/platforms/espressif32
 rm -rf ~/.platformio/packages/framework-arduinoespressif32*
-#startFromTarget='rak11200'
 mkdir -p "$RELEASE_DIR"
-skipBuild=false
-skipTargetsCheck=false
 # Build all PlatformIO environments
-# Get list of targets from release_json_template.json
+# Keep local targets separate so the upstream template can be replaced on each release.
+RELEASE_JSON=$(jq -s '.[0] + {targets: (map(.targets) | add)}' \
+  bin/release_json_template.json bin/releases_json_extra.json)
 
 # Group by platform so consecutive builds reuse the same toolchain/framework packages
-TARGET_ROWS=$(jq -r '.targets | sort_by(.platform) | .[] | "\(.platform)\t\(.board)"' bin/release_json_template.json)
+if [ -n "$onlyTarget" ]; then
+  TARGET_ROWS=$(jq -r --arg target "$onlyTarget" \
+    '.targets | sort_by(.platform) | .[] | select(.board == $target) | "\(.platform)\t\(.board)"' \
+    <<<"$RELEASE_JSON")
+  if [ -z "$TARGET_ROWS" ]; then
+    echo "Error: Target '$onlyTarget' was not found in bin/release_json_template.json or bin/releases_json_extra.json"
+    exit 1
+  fi
+else
+  TARGET_ROWS=$(jq -r '.targets | sort_by(.platform) | .[] | "\(.platform)\t\(.board)"' <<<"$RELEASE_JSON")
+fi
+
 TARGETS=$(printf '%s\n' "$TARGET_ROWS" | cut -f2)
 VERSION="$($(dirname "$0")/get_version.sh)"
 
-echo "Build order (grouped by platform):"
-jq -r '.targets | sort_by(.platform) | group_by(.platform)[] | "  \(.[0].platform): \(map(.board) | join(", "))"' bin/release_json_template.json
+if [ -n "$onlyTarget" ]; then
+  echo "Build target: $onlyTarget"
+else
+  echo "Build order (grouped by platform):"
+  jq -r '.targets | sort_by(.platform) | group_by(.platform)[] | "  \(.[0].platform): \(map(.board) | join(", "))"' <<<"$RELEASE_JSON"
+fi
 
 if [ -z "$VERSION" ]; then
   echo "Error: Could not determine version from bin/get_version.sh"
@@ -37,8 +55,8 @@ else
   echo "Checking that all targets exist in PlatformIO environments..."
   checkStartFromTarget="$startFromTarget"
   for ENV in $TARGETS; do
-    if [[ -n "$checkStartFromTarget" ]]; then
-      if [[ "$ENV" != "$checkStartFromTarget" ]]; then
+    if [[ -n $checkStartFromTarget ]]; then
+      if [[ $ENV != "$checkStartFromTarget" ]]; then
         echo "Skipping check for $ENV until we reach $checkStartFromTarget..."
         continue
       fi
@@ -55,12 +73,11 @@ fi
 
 if [ -n "$MISSING_ENVS" ]; then
   echo "\nThe following environments are missing in PlatformIO configuration:$MISSING_ENVS"
-  echo "Aborting build. Please check your release_json_template.json and platformio.ini."
+  echo "Aborting build. Please check release_json_template.json, releases_json_extra.json and platformio.ini."
   exit 1
 fi
 
 echo "Building targets one by one and cleaning up after each..."
-
 
 # Read extra build flags from build-flags-extra.txt and set PLATFORMIO_BUILD_FLAGS
 EXTRA_FLAGS_FILE="$(dirname "$0")/build-flags-extra.txt"

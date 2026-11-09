@@ -9,6 +9,14 @@
 
 #define PROMICRO_DIY_TCXO
 
+#ifndef PROMICRO_XD6500SHT
+#define PROMICRO_XD6500SHT 0
+#endif
+
+#if PROMICRO_XD6500SHT && (defined(EASYPROMICRO) || defined(PROMICRO_SX1280) || defined(PROMICRO_SX126X_TXEN))
+#error "XD6500SHT requires the standard ProMicro SX1262 pinout"
+#endif
+
 /*----------------------------------------------------------------------------
  *        Headers
  *----------------------------------------------------------------------------*/
@@ -165,12 +173,16 @@ https://github.com/brad112358/easy_E22
 #define LORA_CS (32 + 13) // P1.13
 
 // LORA MODULES
+#if PROMICRO_XD6500SHT
+#define USE_SX1262
+#else
 #define USE_LLCC68
 #define USE_SX1262
 #define USE_RF95
 #define USE_SX1268
 #define USE_LR1121
 #define USE_LR2021
+#endif
 
 // RF95 CONFIG
 #define LORA_DIO0 (0 + 29) // P0.29 BUSY
@@ -200,7 +212,12 @@ https://github.com/brad112358/easy_E22
                                  // so it needs connecting externally if it is used in this way
 #define SX126X_BUSY (0 + 29)     // P0.29
 #define SX126X_RESET (0 + 9)     // P0.09
-#define SX126X_RXEN (0 + 17)     // P0.17
+#if PROMICRO_XD6500SHT
+#define SX126X_RXEN RADIOLIB_NC
+#define SX126X_ANT_SW (0 + 17) // Keep the XD6500SHT switch enabled during both RX and TX.
+#else
+#define SX126X_RXEN (0 + 17) // P0.17
+#endif
 // Opt in with -D PROMICRO_SX126X_TXEN when P1.06 is wired to an external PA's TXEN.
 #if defined(PROMICRO_SX126X_TXEN) && defined(PROMICRO_P106_FREE_FOR_TXEN)
 #define SX126X_TXEN (32 + 6) // P1.06
