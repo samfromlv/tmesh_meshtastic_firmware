@@ -41,13 +41,13 @@ bool NextHopRouter::relayOpaquePacket(const meshtastic_MeshPacket *p)
         (p->next_hop != NO_NEXT_HOP_PREFERENCE && p->next_hop != nodeDB->getLastByteOfNodeNum(getNodeNum())))
         return false;
 
-    // LOCAL_ONLY and KNOWN_ONLY gate on identity, and the only opaque frame carrying its parties in
-    // the header is a PKI-shaped unicast: relay one just when a party is known, which is the rule
-    // RoutingModule applied before opaque frames stopped reaching modules.
-    if (IS_ONE_OF(mode, meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY,
-                  meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY) &&
-        !(p->channel == 0 && !isBroadcast(p->to) &&
-          (nodeInfoLiteHasUser(nodeDB->getMeshNode(p->from)) || nodeInfoLiteHasUser(nodeDB->getMeshNode(p->to)))))
+    // Only PKI-shaped unicasts expose parties for identity-based opaque relay decisions.
+    const bool pkiUnicast = p->channel == 0 && !isBroadcast(p->to);
+    if (mode == meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY &&
+        !(pkiUnicast && (nodeInfoLiteHasUser(nodeDB->getMeshNode(p->from)) || nodeInfoLiteHasUser(nodeDB->getMeshNode(p->to)))))
+        return false;
+    if (mode == meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY &&
+        !nodeInfoLiteIsFavorite(nodeDB->getMeshNode(p->from)))
         return false;
 
     // Dedup opaque relays. Opaque frames deliberately never enter PacketHistory (so unauthenticated
@@ -65,11 +65,20 @@ bool NextHopRouter::relayOpaquePacket(const meshtastic_MeshPacket *p)
     meshtastic_MeshPacket *relay = packetPool.allocCopy(*p);
     if (!relay)
         return false;
-    relay->hop_limit--;
+    if (shouldDecrementHopLimit(p))
+        relay->hop_limit--;
 #if USERPREFS_EVENT_MODE
     capEventRelayHops(relay);
 #endif
     relay->relay_node = nodeDB->getLastByteOfNodeNum(getNodeNum());
+    if (relay->next_hop == NO_NEXT_HOP_PREFERENCE) {
+        const auto forceNextHopMode = FeatureFlags::forceNextHopMode();
+        if (forceNextHopMode == FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK ||
+            forceNextHopMode == FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK) {
+            relay->next_hop = FeatureFlags::forceNextHopRelay();
+            LOG_DEBUG("NHR opaque relay - Forcing next hop to 0x%x due to feature flags", relay->next_hop);
+        }
+    }
     // The interface declines some packets (NODENUM_BROADCAST_NO_LORA) with ERRNO_SHOULD_RELEASE,
     // which leaves the copy ours to free. Dropping it here would leak a pool slot per opaque frame.
     ErrorCode res = Router::send(relay);

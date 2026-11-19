@@ -4,11 +4,12 @@
 // across the cases to prove it. Each expected outcome is a contract, and the assertion messages
 // say what breaks if it is not met.
 //
-//   opaque, per mode   ALL / ALL_SKIP_DECODING / CORE_PORTNUMS_ONLY carry; KNOWN_ONLY and LOCAL_ONLY
-//                      carry a PKI-shaped unicast with one known party, and nothing else - not a
+//   opaque, per mode   ALL / ALL_SKIP_DECODING / CORE_PORTNUMS_ONLY carry; KNOWN_ONLY carries
+//                      packets only from a favorite sender, while LOCAL_ONLY carries a PKI-shaped
+//                      unicast with either party known, and nothing else - not a
 //                      unicast between two strangers, not an unreadable broadcast; NONE carries
 //                      nothing. Both directions are load-bearing: dropping the modes from
-//                      relayOpaquePacket()'s list fails the known-party cases, and dropping the
+//                      relayOpaquePacket()'s list fails the favorite-sender cases, and dropping the
 //                      identity/PKI-shape qualifier fails the stranger and foreign-mesh cases.
 //   licensed node      never carries ciphertext; carries plaintext unless a party is known unlicensed
 //   header gates       hop_limit 0, id 0, someone else's next_hop, CLIENT_MUTE each stop a relay
@@ -23,11 +24,13 @@
 
 // Inside the guard: the harness builds real PKI frames through CryptoEngine entry points that a
 // PKI-excluded build does not declare.
+#include "mesh/FeatureFlags.h"
 #include "support/AuthPipelineHarness.h"
 
 void setUp(void)
 {
     pipelineHarnessSetUp();
+    FeatureFlags::initialize();
 }
 
 void tearDown(void)
@@ -47,6 +50,7 @@ void test_remote_admin_between_other_nodes_relays_in_every_mode(void)
     mockNodeDB->addNode(ADMIN_NODE);
     mockNodeDB->setPublicKey(ADMIN_NODE, admin.pub);
     mockNodeDB->markHasUser(ADMIN_NODE);
+    nodeInfoLiteSetBit(mockNodeDB->getMeshNode(ADMIN_NODE), NODEINFO_BITFIELD_IS_FAVORITE_MASK, true);
     mockNodeDB->addNode(TARGET_NODE);
     mockNodeDB->setPublicKey(TARGET_NODE, target.pub);
     mockNodeDB->markHasUser(TARGET_NODE);
@@ -86,10 +90,9 @@ void test_pki_unicast_between_strangers_relays_unless_mode_needs_identity(void)
     }
 }
 
-// One party known is enough for KNOWN_ONLY / LOCAL_ONLY. The known party is the destination here,
-// so the sender is a stranger and KNOWN_ONLY's decode short-circuit fires; the packet must still
-// reach the relay decision.
-void test_known_destination_satisfies_known_only_and_local_only(void)
+// A known destination is enough for LOCAL_ONLY, but not KNOWN_ONLY: that mode specifically follows
+// favorites of the sender.
+void test_known_destination_satisfies_local_only_but_not_known_only(void)
 {
     const RelayIdentity admin = makeIdentity(ADMIN_NODE);
     const RelayIdentity target = makeIdentity(TARGET_NODE);
@@ -98,16 +101,15 @@ void test_known_destination_satisfies_known_only_and_local_only(void)
     mockNodeDB->markHasUser(TARGET_NODE);
     const meshtastic_MeshPacket p = makePkiUnicastBetween(admin, target, meshtastic_PortNum_TEXT_MESSAGE_APP, 0xADA30003);
 
-    assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY, true,
-                      "KNOWN_ONLY carries a PKI unicast to a node we know, whoever sent it");
+    assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY, false,
+                      "KNOWN_ONLY requires the sender to be a favorite, even when the destination is known");
     assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY, true,
                       "LOCAL_ONLY carries a PKI unicast to a node we know, whoever sent it");
 }
 
-// The mirror of the case above, and the only one that makes the `from` half of the identity test do
-// any work: a known SENDER, a destination we have never heard of. A qualifier rewritten to consult
-// only p->to passes every other case in this suite and fails this one.
-void test_known_source_satisfies_known_only_and_local_only(void)
+// A known sender is not sufficient for KNOWN_ONLY unless that sender is a favorite. LOCAL_ONLY
+// continues to accept the known sender without requiring favorite status.
+void test_known_source_requires_favorite_for_known_only(void)
 {
     const RelayIdentity admin = makeIdentity(ADMIN_NODE);
     const RelayIdentity target = makeIdentity(TARGET_NODE);
@@ -116,40 +118,48 @@ void test_known_source_satisfies_known_only_and_local_only(void)
     mockNodeDB->markHasUser(ADMIN_NODE); // the sender is known; the destination is not in the DB at all
     const meshtastic_MeshPacket p = makePkiUnicastBetween(admin, target, meshtastic_PortNum_TEXT_MESSAGE_APP, 0xADA30013);
 
+    assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY, false,
+                      "KNOWN_ONLY declines a known but non-favorite sender");
+    nodeInfoLiteSetBit(mockNodeDB->getMeshNode(ADMIN_NODE), NODEINFO_BITFIELD_IS_FAVORITE_MASK, true);
     assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY, true,
-                      "KNOWN_ONLY carries a PKI unicast from a node we know, whoever it is addressed to");
+                      "KNOWN_ONLY carries a PKI unicast from a favorite sender");
     assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY, true,
                       "LOCAL_ONLY carries a PKI unicast from a node we know, whoever it is addressed to");
 }
 
-// The only case that makes the channel-0 half do any work. A unicast on a channel hash we do not
-// hold is not PKI - it is someone else's channel traffic, addressed - so these modes decline it even
-// though a party is known. The broadcast case cannot pin this: !isBroadcast() already rejects that.
-void test_known_party_on_a_foreign_channel_is_declined(void)
+// KNOWN_ONLY keys only on the sender's favorite bit, regardless of channel. LOCAL_ONLY still
+// requires a PKI-shaped unicast to a node we know.
+void test_favorite_sender_on_foreign_channel_satisfies_known_only(void)
 {
     const RelayIdentity admin = makeIdentity(ADMIN_NODE);
     const RelayIdentity target = makeIdentity(TARGET_NODE);
+    mockNodeDB->addNode(ADMIN_NODE);
+    mockNodeDB->markHasUser(ADMIN_NODE);
+    nodeInfoLiteSetBit(mockNodeDB->getMeshNode(ADMIN_NODE), NODEINFO_BITFIELD_IS_FAVORITE_MASK, true);
     mockNodeDB->addNode(TARGET_NODE);
     mockNodeDB->setPublicKey(TARGET_NODE, target.pub);
     mockNodeDB->markHasUser(TARGET_NODE);
     meshtastic_MeshPacket p = makePkiUnicastBetween(admin, target, meshtastic_PortNum_TEXT_MESSAGE_APP, 0xADA30023);
     p.channel = 0x2B; // a channel hash we do not hold, so nothing about this frame says PKI
 
-    assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY, false,
-                      "KNOWN_ONLY declines an addressed frame on a foreign channel, known party or not");
+    assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY, true,
+                      "KNOWN_ONLY carries a favorite sender on a foreign channel");
     assertOpaqueRelay(p, meshtastic_Config_DeviceConfig_RebroadcastMode_LOCAL_ONLY, false,
                       "LOCAL_ONLY declines an addressed frame on a foreign channel, known party or not");
 }
 
 // An opaque *broadcast* (a channel we do not hold) is not PKI-shaped. CORE relays it - the
-// port list cannot apply to a packet with no readable port - and only KNOWN/LOCAL/NONE decline.
-void test_unknown_channel_broadcast_relays_in_core_portnums_only(void)
+// port list cannot apply to a packet with no readable port. KNOWN_ONLY relays it only for favorites.
+void test_unknown_channel_broadcast_relays_by_mode_and_favorite(void)
 {
     const meshtastic_MeshPacket foreign = makeUnknownChannelBroadcast(0xADA40004);
+    mockNodeDB->addNode(ADMIN_NODE);
+    nodeInfoLiteSetBit(mockNodeDB->getMeshNode(ADMIN_NODE), NODEINFO_BITFIELD_IS_FAVORITE_MASK, true);
     for (const auto mode : ALL_MODES) {
         const bool expect = IS_ONE_OF(mode, meshtastic_Config_DeviceConfig_RebroadcastMode_ALL,
                                       meshtastic_Config_DeviceConfig_RebroadcastMode_ALL_SKIP_DECODING,
-                                      meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY);
+                                      meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY,
+                                      meshtastic_Config_DeviceConfig_RebroadcastMode_KNOWN_ONLY);
         pipelineRadio->reset();
         config.device.rebroadcast_mode = mode;
         meshtastic_MeshPacket copy = foreign;
@@ -159,7 +169,8 @@ void test_unknown_channel_broadcast_relays_in_core_portnums_only(void)
             packetPool.release(queued);
         char msg[120];
         snprintf(msg, sizeof(msg), "%s: %s", modeName(mode),
-                 expect ? "an unreadable broadcast is carried" : "an unreadable broadcast is not PKI-shaped, so declined");
+                 expect ? "an unreadable broadcast from a favorite is carried"
+                        : "this mode does not carry an unreadable broadcast");
         TEST_ASSERT_EQUAL_MESSAGE(expect ? 1 : 0, pipelineRadio->sendCalls, msg);
         TEST_ASSERT_FALSE(pipelineRouter->historyContains(&copy));
     }
@@ -293,6 +304,25 @@ void test_opaque_relay_carries_a_frame_once_unless_the_originator_repeats_it(voi
     // consult the TX queue, which it does not do. Not this change's to add.
 }
 
+void test_opaque_relay_applies_relayed_force_next_hop_modes(void)
+{
+    const RelayIdentity admin = makeIdentity(ADMIN_NODE);
+    const RelayIdentity target = makeIdentity(TARGET_NODE);
+    const char *flags[] = {"_tn0ab", "_tn1ab", "_tn2ab"};
+    const bool expectForced[] = {false, true, true};
+
+    for (size_t i = 0; i < 3; i++) {
+        pipelineRadio->reset();
+        strncpy(moduleConfig.detection_sensor.name, flags[i], sizeof(moduleConfig.detection_sensor.name) - 1);
+        FeatureFlags::initialize();
+        const meshtastic_MeshPacket p = makePkiUnicastBetween(admin, target, meshtastic_PortNum_ADMIN_APP, 0xADAF000F + i);
+        runPipelineIngress(p);
+
+        TEST_ASSERT_EQUAL_MESSAGE(1, pipelineRadio->sendCalls, "opaque packet should be relayed");
+        TEST_ASSERT_EQUAL_MESSAGE(expectForced[i] ? 0xAB : NO_NEXT_HOP_PREFERENCE, pipelineRadio->lastSent()->next_hop, flags[i]);
+    }
+}
+
 // None of the above depends on packet_signature_policy: the remote-admin case ran STRICT, the
 // strangers case COMPATIBLE. Here the same admin packet goes under every policy in turn.
 void test_relay_decision_ignores_signature_policy(void)
@@ -321,14 +351,15 @@ void setup()
     UNITY_BEGIN();
     RUN_TEST(test_remote_admin_between_other_nodes_relays_in_every_mode);
     RUN_TEST(test_pki_unicast_between_strangers_relays_unless_mode_needs_identity);
-    RUN_TEST(test_known_destination_satisfies_known_only_and_local_only);
-    RUN_TEST(test_known_source_satisfies_known_only_and_local_only);
-    RUN_TEST(test_known_party_on_a_foreign_channel_is_declined);
-    RUN_TEST(test_unknown_channel_broadcast_relays_in_core_portnums_only);
+    RUN_TEST(test_known_destination_satisfies_local_only_but_not_known_only);
+    RUN_TEST(test_known_source_requires_favorite_for_known_only);
+    RUN_TEST(test_favorite_sender_on_foreign_channel_satisfies_known_only);
+    RUN_TEST(test_unknown_channel_broadcast_relays_by_mode_and_favorite);
     RUN_TEST(test_licensed_node_never_relays_opaque_traffic);
     RUN_TEST(test_licensed_node_relays_decoded_unless_a_party_is_known_unlicensed);
     RUN_TEST(test_opaque_relay_header_gates_hold);
     RUN_TEST(test_opaque_relay_carries_a_frame_once_unless_the_originator_repeats_it);
+    RUN_TEST(test_opaque_relay_applies_relayed_force_next_hop_modes);
     RUN_TEST(test_relay_decision_ignores_signature_policy);
     const int result = UNITY_END();
     pipelineHarnessDestroy();
