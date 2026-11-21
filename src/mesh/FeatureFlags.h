@@ -1,6 +1,9 @@
 #pragma once
 
+#include "tmesh/feature_flags.pb.h"
 #include <stdint.h>
+
+class NodeDB;
 
 namespace FeatureFlags
 {
@@ -33,9 +36,31 @@ enum class FavoriteRouterMode : uint8_t {
     PRESERVE_HOPS_AND_RELAY,
 };
 
+struct RestrictedRoutingConfig {
+    RestrictedRoutingMode mode;
+    bool allowsPrivateText;
+};
+struct ForceNextHopConfig {
+    ForceNextHopMode mode;
+    uint8_t relay;
+};
+struct FavoriteRouterConfig {
+    FavoriteRouterMode mode;
+    uint8_t relay;
+};
+
 typedef enum _meshtastic_ExtraPortNum : uint16_t { meshtastic_ExtraPortNum_PRIVATE_TEXT_APP = 283 } meshtastic_ExtraPortNum;
 
 void initialize();
+void loadConfig(NodeDB &db);
+void resetConfig();
+bool copyConfig(tmesh_FeatureFlagsConfig &out);
+bool configAvailable();
+tmesh_Response_Status setConfig(NodeDB &db, const tmesh_FeatureFlagsConfig *config);
+extern const char *const configFileName;
+RestrictedRoutingConfig restrictedRoutingConfig();
+ForceNextHopConfig forceNextHopConfig();
+FavoriteRouterConfig favoriteRouterConfig();
 RestrictedRoutingMode restrictedRoutingMode();
 bool restrictedRoutingAllowsPrivateText();
 HopDecrementMode hopDecrementMode();

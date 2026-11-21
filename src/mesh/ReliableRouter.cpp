@@ -19,10 +19,10 @@
  */
 ErrorCode ReliableRouter::send(meshtastic_MeshPacket *p)
 {
-    if (p->next_hop == NO_NEXT_HOP_PREFERENCE &&
-        FeatureFlags::forceNextHopMode() != FeatureFlags::ForceNextHopMode::FORCE_NEXT_HOP_DISABLED) {
+    const auto forceNextHop = FeatureFlags::forceNextHopConfig();
+    if (p->next_hop == NO_NEXT_HOP_PREFERENCE && forceNextHop.mode != FeatureFlags::ForceNextHopMode::FORCE_NEXT_HOP_DISABLED) {
 
-        p->next_hop = FeatureFlags::forceNextHopRelay();
+        p->next_hop = forceNextHop.relay;
         LOG_DEBUG("RRSend - Forcing next hop to 0x%x due to feature flags", p->next_hop);
     }
     if (isBlockedEventCoordinatePacket(p)) {

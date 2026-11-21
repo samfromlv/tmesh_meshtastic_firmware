@@ -72,10 +72,10 @@ bool NextHopRouter::relayOpaquePacket(const meshtastic_MeshPacket *p)
 #endif
     relay->relay_node = nodeDB->getLastByteOfNodeNum(getNodeNum());
     if (relay->next_hop == NO_NEXT_HOP_PREFERENCE) {
-        const auto forceNextHopMode = FeatureFlags::forceNextHopMode();
-        if (forceNextHopMode == FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK ||
-            forceNextHopMode == FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK) {
-            relay->next_hop = FeatureFlags::forceNextHopRelay();
+        const auto forceNextHop = FeatureFlags::forceNextHopConfig();
+        if (forceNextHop.mode == FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK ||
+            forceNextHop.mode == FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK) {
+            relay->next_hop = forceNextHop.relay;
             LOG_DEBUG("NHR opaque relay - Forcing next hop to 0x%x due to feature flags", relay->next_hop);
         }
     }
@@ -304,11 +304,11 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
 
                     ErrorCode res;
                     if (p->next_hop == NO_NEXT_HOP_PREFERENCE) {
-                        const auto forceNextHopMode = FeatureFlags::forceNextHopMode();
-                        if (forceNextHopMode ==
+                        const auto forceNextHop = FeatureFlags::forceNextHopConfig();
+                        if (forceNextHop.mode ==
                                 FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK ||
-                            forceNextHopMode == FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK) {
-                            tosend->next_hop = FeatureFlags::forceNextHopRelay();
+                            forceNextHop.mode == FeatureFlags::ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK) {
+                            tosend->next_hop = forceNextHop.relay;
                             LOG_DEBUG("NHR rebroadcast - Forcing next hop to 0x%x due to feature flags", tosend->next_hop);
                         }
                         res = FloodingRouter::send(tosend);
@@ -559,11 +559,10 @@ int32_t NextHopRouter::doRetransmissions()
 #endif
                     }
                 } else {
+                    const auto forceNextHopMode = FeatureFlags::forceNextHopMode();
                     if (p.packet->next_hop != NO_NEXT_HOP_PREFERENCE && p.numRetransmissions == 1 &&
-                        (FeatureFlags::forceNextHopMode() ==
-                             FeatureFlags::ForceNextHopMode::LOCAL_PACKETS_WITH_FLOODING_FALLBACK ||
-                         FeatureFlags::forceNextHopMode() ==
-                             FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK)) {
+                        (forceNextHopMode == FeatureFlags::ForceNextHopMode::LOCAL_PACKETS_WITH_FLOODING_FALLBACK ||
+                         forceNextHopMode == FeatureFlags::ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK)) {
                         LOG_DEBUG("Feature flags: resetting next hop to no pref for last retransmission");
                         p.packet->next_hop = NO_NEXT_HOP_PREFERENCE;
                     }

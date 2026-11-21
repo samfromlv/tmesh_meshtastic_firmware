@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package tmesh;
+
+// Send an Envelope as the payload of a self-addressed ADMIN_APP MeshPacket with
+// want_response=true. The response is an ADMIN_APP packet with request_id set.
+// Only local clients can use this protocol; normal local admin access checks apply.
+// Fields 50000 and 50001 are TMesh-specific, not part of Meshtastic's AdminMessage.
+message Envelope {
+  oneof payload {
+    Request request = 50000;
+    Response response = 50001;
+  }
+}
+
+message FeatureFlagsConfig {
+  enum RestrictedRoutingMode {
+    STANDARD_CORE_PORTS = 0;
+    TEXT_ALL_AND_ADMIN = 1;
+    TEXT_ALL_ADMIN_AND_ROUTING = 2;
+    TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE = 3;
+    TEXT_ALL_NODEINFO_ADMIN_AND_ROUTING = 4;
+    TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE = 5;
+  }
+  enum HopDecrementMode {
+    STANDARD_FAVORITE_ROUTER_BEHAVIOR = 0;
+    PRESERVE_AFTER_ANY_FAVORITE_RELAY = 1;
+    DECREMENT_FIRST_HOP_ONLY = 2;
+  }
+  enum ForceNextHopMode {
+    FORCE_NEXT_HOP_DISABLED = 0;
+    LOCAL_PACKETS_WITH_FLOODING_FALLBACK = 1;
+    LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK = 2;
+    ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK = 3;
+  }
+  enum FavoriteRouterMode {
+    FAVORITE_ROUTER_DISABLED = 0;
+    PRESERVE_HOPS_ONLY = 1;
+    PRESERVE_HOPS_AND_RELAY = 2;
+  }
+
+  RestrictedRoutingMode restricted_routing_mode = 1;
+  // False preserves the legacy default of allowing private text.
+  bool restricted_routing_disallows_private_text = 2;
+  HopDecrementMode hop_decrement_mode = 3;
+  ForceNextHopMode force_next_hop_mode = 4;
+  // Relay values are last bytes, 0..255; an enabled mode requires 1..255.
+  uint32 force_next_hop_relay = 5;
+  FavoriteRouterMode favorite_router_mode = 6;
+  uint32 favorite_router_relay = 7;
+}
+
+message Request {
+  enum Operation {
+    UNSPECIFIED = 0;
+    GET = 1;
+    SET = 2;
+    CLEAR = 3;
+  }
+  // GET reads the custom config, SET replaces it, CLEAR restores legacy fallback.
+  Operation operation = 1;
+  FeatureFlagsConfig config = 2;
+}
+
+message Response {
+  enum Status {
+    UNSPECIFIED = 0;
+    OK = 1;
+    INVALID_ARGUMENT = 2;
+    STORAGE_ERROR = 3;
+  }
+  Status status = 1;
+  // When status is OK, absence means the detection-sensor fallback is active.
+  FeatureFlagsConfig config = 2;
+}
+
+message Store {
+  FeatureFlagsConfig config = 1;
+  uint32 format_version = 2;
+}

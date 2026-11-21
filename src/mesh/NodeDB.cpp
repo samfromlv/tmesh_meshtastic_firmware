@@ -8,6 +8,7 @@
 #include "CryptoEngine.h"
 #include "Default.h"
 #include "FSCommon.h"
+#include "FeatureFlags.h"
 #include "MeshRadio.h"
 #include "MeshService.h"
 #include "MessageStore.h"
@@ -1035,6 +1036,7 @@ bool NodeDB::factoryReset(bool eraseBleBonds)
 #endif
 
     spiLock->unlock();
+    FeatureFlags::resetConfig();
 
     // rmDir above nuked the .dat file, but TransmitHistory's in-memory
     // cache auto-flushes every 5 min and would resurrect it.
@@ -1067,6 +1069,7 @@ bool NodeDB::factoryReset(bool eraseBleBonds)
     installDefaultConfig(!eraseBleBonds); // Also preserve the private key if we're not erasing BLE bonds
     installDefaultModuleConfig();
     installDefaultChannels();
+    FeatureFlags::initialize();
     // third, write everything to disk
     saveToDisk();
     if (eraseBleBonds) {
@@ -2688,6 +2691,7 @@ void NodeDB::loadFromDisk()
         installDefaultConfig();
         installDefaultModuleConfig();
         installDefaultChannels();
+        FeatureFlags::resetConfig();
 
         // Hold the radio silent until the operator unlocks. installDefaultConfig
         // would otherwise honour USERPREFS_CONFIG_LORA_REGION (the common shape
@@ -3085,8 +3089,20 @@ void NodeDB::loadFromDisk()
         }
 #endif
 #endif
+#ifdef FSCom
+        spiLock->lock();
+        const bool tmeshFlagsExist = FSCom.exists(FeatureFlags::configFileName);
+        spiLock->unlock();
+        if (tmeshFlagsExist && !EncryptedStorage::isEncrypted(FeatureFlags::configFileName) &&
+            !EncryptedStorage::migrateFile(FeatureFlags::configFileName)) {
+            LOG_ERROR("Can't migrate TMesh feature flags to encrypted storage");
+            storageCorruptThisLoad = true;
+        }
+#endif
     }
 #endif
+
+    FeatureFlags::loadConfig(*this);
 
     // 2.4.X - configuration migration to update new default intervals
     if (moduleConfig.version < 23) {
@@ -3195,6 +3211,7 @@ bool NodeDB::reloadFromDisk()
         // sitting in config.lora.
         return false;
     }
+    FeatureFlags::initialize();
 
     // loadFromDisk() leaves the store untrimmed; run self-care now (getNodeNum()
     // is valid at runtime) to trim/demote non-self overflow, pin self to index 0
@@ -3231,9 +3248,10 @@ bool NodeDB::disableLockdownToPlaintext()
     // plaintext->encrypted migrate loop above. Order does not matter here;
     // EncryptedStorage::removeLockdownArtifacts() (which deletes the DEK,
     // the commit point) only runs after every file is confirmed plaintext.
-    const char *filesToCheck[] = {STANDARD_CONFIG_FILE_NAME, STANDARD_CHANNEL_FILE_NAME, STANDARD_BACKUP_FILE_NAME,
-                                  EVENT_CONFIG_FILE_NAME,    EVENT_CHANNEL_FILE_NAME,    EVENT_BACKUP_FILE_NAME,
-                                  moduleConfigFileName,      deviceStateFileName,        nodeDatabaseFileName};
+    const char *filesToCheck[] = {STANDARD_CONFIG_FILE_NAME,   STANDARD_CHANNEL_FILE_NAME, STANDARD_BACKUP_FILE_NAME,
+                                  EVENT_CONFIG_FILE_NAME,      EVENT_CHANNEL_FILE_NAME,    EVENT_BACKUP_FILE_NAME,
+                                  moduleConfigFileName,        deviceStateFileName,        nodeDatabaseFileName,
+                                  FeatureFlags::configFileName};
     for (const char *fn : filesToCheck) {
         if (!EncryptedStorage::migrateFileToPlaintext(fn)) {
             LOG_ERROR("NodeDB: revert %s to plaintext failed; abort disable (stays in lockdown)", fn);

@@ -2,6 +2,7 @@
 #include "Channels.h"
 #include "CryptoEngine.h"
 #include "DisplayFormatters.h"
+#include "FeatureFlags.h"
 #include "HardwareRNG.h"
 #include "MeshService.h"
 #include "NodeDB.h"
@@ -135,6 +136,16 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
     if (mp.which_payload_variant != meshtastic_MeshPacket_decoded_tag) {
         return handled;
     }
+    tmesh_Envelope tmeshEnvelope = tmesh_Envelope_init_zero;
+    const bool isTmeshRequest =
+        r->which_payload_variant == 0 &&
+        pb_decode_from_bytes(mp.decoded.payload.bytes, mp.decoded.payload.size, &tmesh_Envelope_msg, &tmeshEnvelope) &&
+        tmeshEnvelope.which_payload == tmesh_Envelope_request_tag;
+    if (isTmeshRequest && mp.from != 0) {
+        LOG_WARN("Reject remote TMesh feature flags request");
+        myReply = allocErrorResponse(meshtastic_Routing_Error_NOT_AUTHORIZED, &mp);
+        return true;
+    }
 #ifdef ARCH_PORTDUINO
     // Simulator only: honor exit_simulator unconditionally for the local client (from==0).
     // The from==0 branch below now covers pki_encrypted local packets too, but is_managed
@@ -229,6 +240,48 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
     }
 
     LOG_INFO("Handle admin payload %i", r->which_payload_variant);
+
+    if (isTmeshRequest) {
+        const auto request = tmeshEnvelope.payload.request;
+        tmesh_Response response = tmesh_Response_init_zero;
+        switch (request.operation) {
+        case tmesh_Request_Operation_GET:
+            response.status = FeatureFlags::configAvailable() ? tmesh_Response_Status_OK : tmesh_Response_Status_STORAGE_ERROR;
+            break;
+        case tmesh_Request_Operation_SET:
+            if (!request.has_config) {
+                LOG_WARN("TMesh feature flags SET requires a config");
+                response.status = tmesh_Response_Status_INVALID_ARGUMENT;
+            } else {
+                response.status = FeatureFlags::setConfig(*nodeDB, &request.config);
+            }
+            break;
+        case tmesh_Request_Operation_CLEAR:
+            response.status = FeatureFlags::setConfig(*nodeDB, nullptr);
+            break;
+        default:
+            LOG_WARN("Invalid TMesh feature flags request");
+            response.status = tmesh_Response_Status_INVALID_ARGUMENT;
+            break;
+        }
+        response.has_config = FeatureFlags::copyConfig(response.config);
+        tmeshEnvelope = tmesh_Envelope_init_zero;
+        tmeshEnvelope.which_payload = tmesh_Envelope_response_tag;
+        tmeshEnvelope.payload.response = response;
+        myReply = allocDataPacket();
+        if (myReply) {
+            myReply->decoded.payload.size = pb_encode_to_bytes(
+                myReply->decoded.payload.bytes, sizeof(myReply->decoded.payload.bytes), &tmesh_Envelope_msg, &tmeshEnvelope);
+            if (!myReply->decoded.payload.size) {
+                LOG_ERROR("Failed to encode TMesh feature flags response");
+                packetPool.release(myReply);
+                myReply = nullptr;
+            }
+        } else {
+            LOG_ERROR("Failed to allocate TMesh feature flags response");
+        }
+        return true;
+    }
 
     // all of the get and set messages, including those for other modules, flow through here first.
     // any message that changes state, we want to check the passkey for

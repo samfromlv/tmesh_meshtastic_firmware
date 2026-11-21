@@ -146,8 +146,9 @@ bool FloodingRouter::roleAllowsCancelingDupe(const meshtastic_MeshPacket *p)
         // CLIENT_BASE: if the packet is from or to a favorited node,
         // we should act like a ROUTER and should never cancel a rebroadcast (i.e. we should always rebroadcast),
         // even if we've heard another station rebroadcast it already.
-        return !(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
-                 FeatureFlags::favoriteRouterRelay() == p->relay_node) &&
+        const auto favoriteRouter = FeatureFlags::favoriteRouterConfig();
+        return !(favoriteRouter.mode == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
+                 favoriteRouter.relay == p->relay_node) &&
                !nodeDB->isFromOrToFavoritedNode(*p);
     }
 
@@ -167,9 +168,10 @@ void FloodingRouter::perhapsCancelDupe(const meshtastic_MeshPacket *p)
         iface->clampToLateRebroadcastWindow(getFrom(p), p->id);
     }
 
+    const auto favoriteRouter = FeatureFlags::favoriteRouterConfig();
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE && iface &&
-        ((FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
-          FeatureFlags::favoriteRouterRelay() == p->relay_node) ||
+        ((favoriteRouter.mode == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY &&
+          favoriteRouter.relay == p->relay_node) ||
          (nodeDB && nodeDB->isFromOrToFavoritedNode(*p)))) {
 
         LOG_DEBUG("Clamping packet 0x%08x from favorite node 0x%08x to late rebroadcast window", p->id, getFrom(p));

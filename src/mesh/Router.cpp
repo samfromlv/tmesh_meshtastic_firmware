@@ -276,9 +276,9 @@ bool Router::shouldDecrementHopLimit(const meshtastic_MeshPacket *p)
         return true;
     }
 
-    if (!preserveAfterAnyFavorite &&
-        FeatureFlags::favoriteRouterMode() != FeatureFlags::FavoriteRouterMode::FAVORITE_ROUTER_DISABLED &&
-        FeatureFlags::favoriteRouterRelay() == p->relay_node) {
+    const auto favoriteRouter = FeatureFlags::favoriteRouterConfig();
+    if (!preserveAfterAnyFavorite && favoriteRouter.mode != FeatureFlags::FavoriteRouterMode::FAVORITE_ROUTER_DISABLED &&
+        favoriteRouter.relay == p->relay_node) {
         return false; // Don't decrement if previous relay is the configured favorite router
     }
     // router_preserve_hops: not suitable right now - removed from config until
@@ -1588,7 +1588,8 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
         if (shouldIgnoreNonstandardPorts && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
             const bool useRestrictedRouting =
                 !(FeatureFlags::isTmesh() && p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT);
-            const auto restrictedRoutingMode = FeatureFlags::restrictedRoutingMode();
+            const auto restrictedRouting = FeatureFlags::restrictedRoutingConfig();
+            const auto restrictedRoutingMode = restrictedRouting.mode;
             bool isAllowedPort = true;
 
             if (!useRestrictedRouting || restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS) {
@@ -1636,7 +1637,7 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
             }
 
             if (useRestrictedRouting && p->decoded.portnum == FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP &&
-                !FeatureFlags::restrictedRoutingAllowsPrivateText())
+                !restrictedRouting.allowsPrivateText)
                 isAllowedPort = false;
 
             if (!isAllowedPort) {
