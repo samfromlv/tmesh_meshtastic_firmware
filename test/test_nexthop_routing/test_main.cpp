@@ -738,14 +738,72 @@ static void configureFeatureFlags(const char *flags)
 void test_featureFlags_parse_independent_tokens(void)
 {
     configureFeatureFlags("_tr1_h0");
-    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() ==
-                     FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN);
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::TEXT_ALL_AND_ADMIN);
     TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::PRESERVE_AFTER_ANY_FAVORITE_RELAY);
 
     configureFeatureFlags("_th1_x4ac_r5");
     TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() ==
-                     FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE);
+                     FeatureFlags::RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE);
     TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::DECREMENT_FIRST_HOP_ONLY);
+}
+
+// Both spellings select the same routing mode; the last valid routing token controls private text.
+void test_featureFlags_strict_restricted_modes_and_reset(void)
+{
+    const FeatureFlags::RestrictedRoutingMode modes[] = {
+        FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS,
+        FeatureFlags::RestrictedRoutingMode::TEXT_ALL_AND_ADMIN,
+        FeatureFlags::RestrictedRoutingMode::TEXT_ALL_ADMIN_AND_ROUTING,
+        FeatureFlags::RestrictedRoutingMode::TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE,
+        FeatureFlags::RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_AND_ROUTING,
+        FeatureFlags::RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE,
+    };
+    for (size_t i = 0; i < 6; i++) {
+        char flag[16];
+        snprintf(flag, sizeof(flag), "_tr%u_h1", static_cast<unsigned>(i));
+        configureFeatureFlags(flag);
+        TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[i]);
+        TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+        TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::DECREMENT_FIRST_HOP_ONLY);
+
+        snprintf(flag, sizeof(flag), "_trs%u_h1", static_cast<unsigned>(i));
+        configureFeatureFlags(flag);
+        TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[i]);
+        TEST_ASSERT_FALSE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+        TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::DECREMENT_FIRST_HOP_ONLY);
+    }
+
+    configureFeatureFlags("_trs1_r2");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[2]);
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    configureFeatureFlags("_tr2_rs1");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[1]);
+    TEST_ASSERT_FALSE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    configureFeatureFlags("_trs1_r0");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[0]);
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    configureFeatureFlags("_tr1_rs0");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[0]);
+    TEST_ASSERT_FALSE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+
+    const char *invalidFlags[] = {"_trs", "_trs6", "_trs12", "_trx1"};
+    for (const char *flag : invalidFlags) {
+        configureFeatureFlags(flag);
+        TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS);
+        TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    }
+    configureFeatureFlags("_trs1_rs9_h1");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == modes[1]);
+    TEST_ASSERT_FALSE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::DECREMENT_FIRST_HOP_ONLY);
+    configureFeatureFlags("_t");
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    configureFeatureFlags("_trs1");
+    moduleConfig.detection_sensor.enabled = true;
+    FeatureFlags::initialize();
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS);
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingAllowsPrivateText());
+    moduleConfig.detection_sensor.enabled = false;
 }
 
 void test_featureFlags_require_whole_tokens(void)
@@ -830,8 +888,7 @@ void test_featureFlags_parse_relay_modes_and_hex_bytes(void)
     TEST_ASSERT_TRUE(FeatureFlags::favoriteRouterMode() == FeatureFlags::FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY);
     TEST_ASSERT_EQUAL_HEX8(0xCD, FeatureFlags::favoriteRouterRelay());
     TEST_ASSERT_TRUE(FeatureFlags::hopDecrementMode() == FeatureFlags::HopDecrementMode::PRESERVE_AFTER_ANY_FAVORITE_RELAY);
-    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() ==
-                     FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN);
+    TEST_ASSERT_TRUE(FeatureFlags::restrictedRoutingMode() == FeatureFlags::RestrictedRoutingMode::TEXT_ALL_AND_ADMIN);
 
     configureFeatureFlags("_tn1ff_f001");
     TEST_ASSERT_TRUE(FeatureFlags::forceNextHopMode() ==
@@ -1398,6 +1455,7 @@ void setup()
 
     printf("\n=== shouldDecrementHopLimit (M2 site 4) ===\n");
     RUN_TEST(test_featureFlags_parse_independent_tokens);
+    RUN_TEST(test_featureFlags_strict_restricted_modes_and_reset);
     RUN_TEST(test_featureFlags_require_whole_tokens);
     RUN_TEST(test_featureFlags_reinitialize_resets_modes);
     RUN_TEST(test_hoplimit_h0_ignores_local_and_favorite_roles);

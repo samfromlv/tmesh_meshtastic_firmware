@@ -1592,46 +1592,52 @@ void Router::dispatchReceived(meshtastic_MeshPacket *p, RxSource src)
             bool isAllowedPort = true;
 
             if (!useRestrictedRouting || restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::STANDARD_CORE_PORTS) {
-                isAllowedPort =
-                    IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
-                              meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_POSITION_APP,
-                              meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TELEMETRY_APP,
-                              meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP, meshtastic_PortNum_KEY_VERIFICATION_APP,
-                              meshtastic_PortNum_WAYPOINT_APP, meshtastic_PortNum_STORE_FORWARD_APP,
-                              meshtastic_PortNum_TRACEROUTE_APP, meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
-            } else if (restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN) {
+                isAllowedPort = IS_ONE_OF(
+                    p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP, meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                    FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP, meshtastic_PortNum_POSITION_APP,
+                    meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TELEMETRY_APP,
+                    meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP, meshtastic_PortNum_KEY_VERIFICATION_APP,
+                    meshtastic_PortNum_WAYPOINT_APP, meshtastic_PortNum_STORE_FORWARD_APP, meshtastic_PortNum_TRACEROUTE_APP,
+                    meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
+            } else if (restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_ALL_AND_ADMIN) {
                 isAllowedPort = IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
+                                          FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP,
                                           meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP);
-            } else if (restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_AND_ROUTING) {
+            } else if (restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_ALL_ADMIN_AND_ROUTING) {
                 isAllowedPort = IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
-                                          meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP,
+                                          meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                                          FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP, meshtastic_PortNum_ADMIN_APP,
                                           meshtastic_PortNum_ROUTING_APP);
-            } else if (restrictedRoutingMode ==
-                       FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE) {
+            } else if (restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE) {
                 isAllowedPort = IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
-                                          meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_ADMIN_APP,
+                                          meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                                          FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP, meshtastic_PortNum_ADMIN_APP,
                                           meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TRACEROUTE_APP);
-            } else if (restrictedRoutingMode ==
-                       FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_AND_ROUTING) {
+            } else if (restrictedRoutingMode == FeatureFlags::RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_AND_ROUTING) {
                 isAllowedPort = IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
-                                          meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_NODEINFO_APP,
+                                          meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                                          FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP, meshtastic_PortNum_NODEINFO_APP,
                                           meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ROUTING_APP);
             } else if (restrictedRoutingMode ==
-                       FeatureFlags::RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE) {
-                isAllowedPort =
-                    IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
-                              meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_NODEINFO_APP,
-                              meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TRACEROUTE_APP);
+                       FeatureFlags::RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE) {
+                isAllowedPort = IS_ONE_OF(
+                    p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP, meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                    FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP, meshtastic_PortNum_NODEINFO_APP,
+                    meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TRACEROUTE_APP);
             } else {
                 LOG_WARN("Unknown restricted routing mode, falling back to allowing all standard ports");
-                isAllowedPort =
-                    IS_ONE_OF(p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
-                              meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_POSITION_APP,
-                              meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TELEMETRY_APP,
-                              meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP, meshtastic_PortNum_KEY_VERIFICATION_APP,
-                              meshtastic_PortNum_WAYPOINT_APP, meshtastic_PortNum_STORE_FORWARD_APP,
-                              meshtastic_PortNum_TRACEROUTE_APP, meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
+                isAllowedPort = IS_ONE_OF(
+                    p->decoded.portnum, meshtastic_PortNum_TEXT_MESSAGE_APP, meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                    FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP, meshtastic_PortNum_POSITION_APP,
+                    meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP, meshtastic_PortNum_TELEMETRY_APP,
+                    meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP, meshtastic_PortNum_KEY_VERIFICATION_APP,
+                    meshtastic_PortNum_WAYPOINT_APP, meshtastic_PortNum_STORE_FORWARD_APP, meshtastic_PortNum_TRACEROUTE_APP,
+                    meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
             }
+
+            if (useRestrictedRouting && p->decoded.portnum == FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP &&
+                !FeatureFlags::restrictedRoutingAllowsPrivateText())
+                isAllowedPort = false;
 
             if (!isAllowedPort) {
                 LOG_DEBUG("Ignore packet on non-standard portnum for CORE_PORTNUMS_ONLY");

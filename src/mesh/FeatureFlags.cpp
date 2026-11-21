@@ -10,6 +10,7 @@ namespace FeatureFlags
 {
 
 static RestrictedRoutingMode cachedRestrictedRoutingMode = RestrictedRoutingMode::STANDARD_CORE_PORTS;
+static bool cachedRestrictedRoutingAllowsPrivateText = true;
 static HopDecrementMode cachedHopDecrementMode = HopDecrementMode::STANDARD_FAVORITE_ROUTER_BEHAVIOR;
 static ForceNextHopMode cachedForceNextHopMode = ForceNextHopMode::FORCE_NEXT_HOP_DISABLED;
 static uint8_t cachedForceNextHopRelay;
@@ -31,6 +32,7 @@ static int hexDigit(char digit)
 void initialize()
 {
     cachedRestrictedRoutingMode = RestrictedRoutingMode::STANDARD_CORE_PORTS;
+    cachedRestrictedRoutingAllowsPrivateText = true;
     cachedHopDecrementMode = HopDecrementMode::STANDARD_FAVORITE_ROUTER_BEHAVIOR;
     cachedForceNextHopMode = ForceNextHopMode::FORCE_NEXT_HOP_DISABLED;
     cachedForceNextHopRelay = 0;
@@ -74,30 +76,39 @@ void initialize()
                         cachedFavoriteRouterRelay = static_cast<uint8_t>((high << 4) | low);
                     }
                 }
-            } else if (length > 0 && (name[start] == 'r' || name[start] == 'h') && length != 2) {
-                LOG_WARN("Invalid feature flag length for %c", name[start]);
-            } else if (length == 2 && name[start] == 'r') {
-                switch (name[start + 1]) {
+            } else if (length > 0 && name[start] == 'r') {
+                const bool strict = length == 3 && name[start + 1] == 's';
+                if (length != 2 && !strict) {
+                    LOG_WARN("Invalid feature flag length for r");
+                    continue;
+                }
+                const char mode = name[start + (strict ? 2 : 1)];
+                switch (mode) {
+                case '0':
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::STANDARD_CORE_PORTS;
+                    break;
                 case '1':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_AND_ADMIN;
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_AND_ADMIN;
                     break;
                 case '2':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_AND_ROUTING;
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_ADMIN_AND_ROUTING;
                     break;
                 case '3':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE;
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE;
                     break;
                 case '4':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_AND_ROUTING;
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_AND_ROUTING;
                     break;
                 case '5':
-                    cachedRestrictedRoutingMode =
-                        RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE;
+                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE;
                     break;
                 default:
-                    LOG_WARN("Invalid restricted routing feature flag value %c", name[start + 1]);
-                    break;
+                    LOG_WARN("Invalid restricted routing feature flag value %c", mode);
+                    continue;
                 }
+                cachedRestrictedRoutingAllowsPrivateText = !strict;
+            } else if (length > 0 && name[start] == 'h' && length != 2) {
+                LOG_WARN("Invalid feature flag length for h");
             } else if (length == 2 && name[start] == 'h') {
                 switch (name[start + 1]) {
                 case '0':
@@ -116,8 +127,9 @@ void initialize()
         }
     }
 
-    LOG_DEBUG("Feature flags initialized: restricted routing mode %u, hop decrement mode %u",
-              (unsigned)cachedRestrictedRoutingMode, (unsigned)cachedHopDecrementMode);
+    LOG_DEBUG("Feature flags initialized: restricted routing mode %u, private text %s, hop decrement mode %u",
+              (unsigned)cachedRestrictedRoutingMode, cachedRestrictedRoutingAllowsPrivateText ? "allowed" : "disabled",
+              (unsigned)cachedHopDecrementMode);
     LOG_DEBUG("Feature flags: force next hop mode %u relay 0x%x, favorite router mode %u relay 0x%x",
               (unsigned)cachedForceNextHopMode, cachedForceNextHopRelay, (unsigned)cachedFavoriteRouterMode,
               cachedFavoriteRouterRelay);
@@ -126,6 +138,11 @@ void initialize()
 RestrictedRoutingMode restrictedRoutingMode()
 {
     return cachedRestrictedRoutingMode;
+}
+
+bool restrictedRoutingAllowsPrivateText()
+{
+    return cachedRestrictedRoutingAllowsPrivateText;
 }
 
 HopDecrementMode hopDecrementMode()
@@ -161,8 +178,8 @@ bool isTmesh()
 bool allowsTracerouteRouting(bool isMqttPacket)
 {
     return (cachedIsTmesh && isMqttPacket) || cachedRestrictedRoutingMode == RestrictedRoutingMode::STANDARD_CORE_PORTS ||
-           cachedRestrictedRoutingMode == RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE ||
-           cachedRestrictedRoutingMode == RestrictedRoutingMode::TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE;
+           cachedRestrictedRoutingMode == RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE ||
+           cachedRestrictedRoutingMode == RestrictedRoutingMode::TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE;
 }
 
 } // namespace FeatureFlags

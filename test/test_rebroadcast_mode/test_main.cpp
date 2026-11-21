@@ -13,6 +13,8 @@
 //                      identity/PKI-shape qualifier fails the stranger and foreign-mesh cases.
 //   licensed node      never carries ciphertext; carries plaintext unless a party is known unlicensed
 //   header gates       hop_limit 0, id 0, someone else's next_hop, CLIENT_MUTE each stop a relay
+//   restricted ports   r0-r5 relay private text; rs0-rs5 suppress it without suppressing ordinary
+//                      text. The check is post-decode: opaque packets cannot be filtered by port.
 //
 // Every case builds a real PKI frame, so the suite runs only where PKI is compiled in.
 
@@ -323,6 +325,73 @@ void test_opaque_relay_applies_relayed_force_next_hop_modes(void)
     }
 }
 
+void test_restricted_routing_private_text_modes(void)
+{
+    config.device.rebroadcast_mode = meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY;
+    uint32_t id = 0xADB00000;
+    for (unsigned mode = 0; mode <= 5; mode++) {
+        for (unsigned strict = 0; strict <= 1; strict++) {
+            snprintf(moduleConfig.detection_sensor.name, sizeof(moduleConfig.detection_sensor.name), "_tr%s%u", strict ? "s" : "",
+                     mode);
+            FeatureFlags::initialize();
+            const meshtastic_PortNum ports[] = {
+                static_cast<meshtastic_PortNum>(FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP),
+                meshtastic_PortNum_TEXT_MESSAGE_APP,
+                meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+                meshtastic_PortNum_WAYPOINT_APP,
+            };
+            for (const auto port : ports) {
+                pipelineRadio->reset();
+                meshtastic_MeshPacket p = makeDecoded(ADMIN_NODE, NODENUM_BROADCAST, port, SMALL_PAYLOAD);
+                p.id = ++id;
+                p.hop_limit = 1;
+                p.hop_start = 2;
+                p.transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+                runPipelineIngress(channelEncode(p));
+                drainPhoneQueue();
+                const bool expected = (mode == 0 || port != meshtastic_PortNum_WAYPOINT_APP) &&
+                                      (!strict || port != FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP);
+                TEST_ASSERT_EQUAL_MESSAGE(expected ? 1 : 0, pipelineRadio->sendCalls, moduleConfig.detection_sensor.name);
+            }
+        }
+    }
+}
+
+void test_private_text_remains_allowed_outside_active_restrictions(void)
+{
+    struct Case {
+        const char *flags;
+        meshtastic_Config_DeviceConfig_RebroadcastMode mode;
+        bool tmeshMqtt;
+    } cases[] = {
+        {"_t", meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY, false},
+        {"_trs0", meshtastic_Config_DeviceConfig_RebroadcastMode_ALL, false},
+        {"_trs0", meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY, true},
+        {"_trs1", meshtastic_Config_DeviceConfig_RebroadcastMode_ALL, false},
+        {"_trs1", meshtastic_Config_DeviceConfig_RebroadcastMode_CORE_PORTNUMS_ONLY, true},
+    };
+    uint32_t id = 0xADB10000;
+    for (const auto &c : cases) {
+        pipelineRadio->reset();
+        config.device.rebroadcast_mode = c.mode;
+        snprintf(moduleConfig.detection_sensor.name, sizeof(moduleConfig.detection_sensor.name), "%s", c.flags);
+        moduleConfig.mqtt.enabled = c.tmeshMqtt;
+        snprintf(moduleConfig.mqtt.address, sizeof(moduleConfig.mqtt.address), "%s", c.tmeshMqtt ? tmesh_mqtt_address_part : "");
+        FeatureFlags::initialize();
+        meshtastic_MeshPacket p =
+            makeDecoded(ADMIN_NODE, NODENUM_BROADCAST,
+                        static_cast<meshtastic_PortNum>(FeatureFlags::meshtastic_ExtraPortNum_PRIVATE_TEXT_APP), SMALL_PAYLOAD);
+        p.id = ++id;
+        p.hop_limit = 1;
+        p.hop_start = 2;
+        p.transport_mechanism = c.tmeshMqtt ? meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT
+                                            : meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA;
+        runPipelineIngress(channelEncode(p));
+        drainPhoneQueue();
+        TEST_ASSERT_EQUAL_MESSAGE(1, pipelineRadio->sendCalls, c.flags);
+    }
+}
+
 // None of the above depends on packet_signature_policy: the remote-admin case ran STRICT, the
 // strangers case COMPATIBLE. Here the same admin packet goes under every policy in turn.
 void test_relay_decision_ignores_signature_policy(void)
@@ -360,6 +429,8 @@ void setup()
     RUN_TEST(test_opaque_relay_header_gates_hold);
     RUN_TEST(test_opaque_relay_carries_a_frame_once_unless_the_originator_repeats_it);
     RUN_TEST(test_opaque_relay_applies_relayed_force_next_hop_modes);
+    RUN_TEST(test_restricted_routing_private_text_modes);
+    RUN_TEST(test_private_text_remains_allowed_outside_active_restrictions);
     RUN_TEST(test_relay_decision_ignores_signature_policy);
     const int result = UNITY_END();
     pipelineHarnessDestroy();

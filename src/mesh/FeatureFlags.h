@@ -7,11 +7,11 @@ namespace FeatureFlags
 
 enum class RestrictedRoutingMode : uint8_t {
     STANDARD_CORE_PORTS,
-    TEXT_COMPRESSED_TEXT_AND_ADMIN,
-    TEXT_COMPRESSED_TEXT_ADMIN_AND_ROUTING,
-    TEXT_COMPRESSED_TEXT_ADMIN_ROUTING_AND_TRACEROUTE,
-    TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_AND_ROUTING,
-    TEXT_COMPRESSED_TEXT_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE,
+    TEXT_ALL_AND_ADMIN,
+    TEXT_ALL_ADMIN_AND_ROUTING,
+    TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE,
+    TEXT_ALL_NODEINFO_ADMIN_AND_ROUTING,
+    TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE,
 };
 
 enum class HopDecrementMode : uint8_t {
@@ -33,8 +33,11 @@ enum class FavoriteRouterMode : uint8_t {
     PRESERVE_HOPS_AND_RELAY,
 };
 
+typedef enum _meshtastic_ExtraPortNum : uint16_t { meshtastic_ExtraPortNum_PRIVATE_TEXT_APP = 283 } meshtastic_ExtraPortNum;
+
 void initialize();
 RestrictedRoutingMode restrictedRoutingMode();
+bool restrictedRoutingAllowsPrivateText();
 HopDecrementMode hopDecrementMode();
 ForceNextHopMode forceNextHopMode();
 uint8_t forceNextHopRelay();
