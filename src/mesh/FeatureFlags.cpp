@@ -135,6 +135,63 @@ static int hexDigit(char digit)
     return -1;
 }
 
+void parseLegacyName(const char *name, size_t capacity, tmesh_FeatureFlagsConfig &out)
+{
+    out = tmesh_FeatureFlagsConfig_init_zero;
+    for (size_t index = 2; index < capacity && name[index] != '\0';) {
+        const size_t start = index;
+        while (index < capacity && name[index] != '\0' && name[index] != '_')
+            index++;
+        const size_t length = index - start;
+        if (index == capacity) {
+            LOG_WARN("Unterminated feature flags");
+            break;
+        }
+        if (length > 0 && (name[start] == 'n' || name[start] == 'f')) {
+            const char prefix = name[start];
+            if (length != 4) {
+                LOG_WARN("Invalid feature flag length for %c", prefix);
+            } else {
+                const int high = hexDigit(name[start + 2]);
+                const int low = hexDigit(name[start + 3]);
+                const char mode = name[start + 1];
+                if (high < 0 || low < 0 || (high == 0 && low == 0) || mode < '0' || mode > (prefix == 'n' ? '2' : '1')) {
+                    LOG_WARN("Invalid mode or relay byte for feature flag %c", prefix);
+                } else if (prefix == 'n') {
+                    out.force_next_hop_mode = static_cast<tmesh_FeatureFlagsConfig_ForceNextHopMode>(mode - '0' + 1);
+                    out.force_next_hop_relay = (high << 4) | low;
+                } else {
+                    out.favorite_router_mode = static_cast<tmesh_FeatureFlagsConfig_FavoriteRouterMode>(mode - '0' + 1);
+                    out.favorite_router_relay = (high << 4) | low;
+                }
+            }
+        } else if (length > 0 && name[start] == 'r') {
+            const bool strict = length == 3 && name[start + 1] == 's';
+            if (length != 2 && !strict) {
+                LOG_WARN("Invalid feature flag length for r");
+            } else {
+                const char mode = name[start + (strict ? 2 : 1)];
+                if (mode >= '0' && mode <= '5') {
+                    out.restricted_routing_mode = static_cast<tmesh_FeatureFlagsConfig_RestrictedRoutingMode>(mode - '0');
+                    out.restricted_routing_disallows_private_text = strict;
+                } else {
+                    LOG_WARN("Invalid restricted routing feature flag value %c", mode);
+                }
+            }
+        } else if (length > 0 && name[start] == 'h') {
+            if (length != 2) {
+                LOG_WARN("Invalid feature flag length for h");
+            } else if (name[start + 1] == '0' || name[start + 1] == '1') {
+                out.hop_decrement_mode = static_cast<tmesh_FeatureFlagsConfig_HopDecrementMode>(name[start + 1] - '0' + 1);
+            } else {
+                LOG_WARN("Invalid hop decrement feature flag value %c", name[start + 1]);
+            }
+        }
+        if (name[index] == '_')
+            index++;
+    }
+}
+
 void initialize()
 {
     concurrency::LockGuard cacheGuard(&cacheMutex);
@@ -155,6 +212,10 @@ void initialize()
         loadFailed = configLoadFailed;
     }
     const char *name = moduleConfig.detection_sensor.name;
+    if (!current.has_config && !loadFailed && !moduleConfig.detection_sensor.enabled && name[0] == '_' && name[1] == 't') {
+        parseLegacyName(name, sizeof(moduleConfig.detection_sensor.name), current.config);
+        current.has_config = true;
+    }
     if (current.has_config) {
         const auto &c = current.config;
         cachedRestrictedRoutingMode = static_cast<RestrictedRoutingMode>(c.restricted_routing_mode);
@@ -164,90 +225,6 @@ void initialize()
         cachedForceNextHopRelay = static_cast<uint8_t>(c.force_next_hop_relay);
         cachedFavoriteRouterMode = static_cast<FavoriteRouterMode>(c.favorite_router_mode);
         cachedFavoriteRouterRelay = static_cast<uint8_t>(c.favorite_router_relay);
-    } else if (!loadFailed && !moduleConfig.detection_sensor.enabled && name[0] == '_' && name[1] == 't') {
-        const size_t capacity = sizeof(moduleConfig.detection_sensor.name);
-        for (size_t index = 2; index < capacity && name[index] != '\0';) {
-            const size_t start = index;
-            while (index < capacity && name[index] != '\0' && name[index] != '_')
-                index++;
-            const size_t length = index - start;
-            if (index == capacity) {
-                LOG_WARN("Unterminated feature flags");
-                break;
-            }
-            if (length > 0 && (name[start] == 'n' || name[start] == 'f')) {
-                const char prefix = name[start];
-                if (length != 4) {
-                    LOG_WARN("Invalid feature flag length for %c", prefix);
-                } else {
-                    const int high = hexDigit(name[start + 2]);
-                    const int low = hexDigit(name[start + 3]);
-                    const char mode = name[start + 1];
-                    if (high < 0 || low < 0 || (high == 0 && low == 0) || mode < '0' || mode > (prefix == 'n' ? '2' : '1')) {
-                        LOG_WARN("Invalid mode or relay byte for feature flag %c", prefix);
-                    } else if (prefix == 'n') {
-                        const ForceNextHopMode modes[] = {
-                            ForceNextHopMode::LOCAL_PACKETS_WITH_FLOODING_FALLBACK,
-                            ForceNextHopMode::LOCAL_AND_RELAYED_PACKETS_WITH_FLOODING_FALLBACK,
-                            ForceNextHopMode::ALL_PACKETS_WITHOUT_FORCED_FLOODING_FALLBACK,
-                        };
-                        cachedForceNextHopMode = modes[mode - '0'];
-                        cachedForceNextHopRelay = static_cast<uint8_t>((high << 4) | low);
-                    } else {
-                        cachedFavoriteRouterMode =
-                            mode == '0' ? FavoriteRouterMode::PRESERVE_HOPS_ONLY : FavoriteRouterMode::PRESERVE_HOPS_AND_RELAY;
-                        cachedFavoriteRouterRelay = static_cast<uint8_t>((high << 4) | low);
-                    }
-                }
-            } else if (length > 0 && name[start] == 'r') {
-                const bool strict = length == 3 && name[start + 1] == 's';
-                if (length != 2 && !strict) {
-                    LOG_WARN("Invalid feature flag length for r");
-                    continue;
-                }
-                const char mode = name[start + (strict ? 2 : 1)];
-                switch (mode) {
-                case '0':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::STANDARD_CORE_PORTS;
-                    break;
-                case '1':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_AND_ADMIN;
-                    break;
-                case '2':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_ADMIN_AND_ROUTING;
-                    break;
-                case '3':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_ADMIN_ROUTING_AND_TRACEROUTE;
-                    break;
-                case '4':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_AND_ROUTING;
-                    break;
-                case '5':
-                    cachedRestrictedRoutingMode = RestrictedRoutingMode::TEXT_ALL_NODEINFO_ADMIN_ROUTING_AND_TRACEROUTE;
-                    break;
-                default:
-                    LOG_WARN("Invalid restricted routing feature flag value %c", mode);
-                    continue;
-                }
-                cachedRestrictedRoutingAllowsPrivateText = !strict;
-            } else if (length > 0 && name[start] == 'h' && length != 2) {
-                LOG_WARN("Invalid feature flag length for h");
-            } else if (length == 2 && name[start] == 'h') {
-                switch (name[start + 1]) {
-                case '0':
-                    cachedHopDecrementMode = HopDecrementMode::PRESERVE_AFTER_ANY_FAVORITE_RELAY;
-                    break;
-                case '1':
-                    cachedHopDecrementMode = HopDecrementMode::DECREMENT_FIRST_HOP_ONLY;
-                    break;
-                default:
-                    LOG_WARN("Invalid hop decrement feature flag value %c", name[start + 1]);
-                    break;
-                }
-            }
-            if (name[index] == '_')
-                index++;
-        }
     }
 
     LOG_DEBUG("Feature flags initialized: restricted routing mode %u, private text %s, hop decrement mode %u",

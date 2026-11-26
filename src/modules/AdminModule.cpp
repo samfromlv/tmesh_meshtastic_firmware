@@ -254,10 +254,14 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
                 response.status = tmesh_Response_Status_INVALID_ARGUMENT;
             } else {
                 response.status = FeatureFlags::setConfig(*nodeDB, &request.config);
+                if (response.status == tmesh_Response_Status_OK)
+                    hasDeferredTmeshConfig = false;
             }
             break;
         case tmesh_Request_Operation_CLEAR:
             response.status = FeatureFlags::setConfig(*nodeDB, nullptr);
+            if (response.status == tmesh_Response_Status_OK)
+                hasDeferredTmeshConfig = false;
             break;
         default:
             LOG_WARN("Invalid TMesh feature flags request");
@@ -534,6 +538,11 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
         break;
     }
     case meshtastic_AdminMessage_commit_edit_settings_tag: {
+        if (!saveDeferredTmeshConfig()) {
+            editTransactionActivityMs = millis();
+            myReply = allocErrorResponse(meshtastic_Routing_Error_BAD_REQUEST, &mp);
+            break;
+        }
         disableBluetooth();
         LOG_INFO("Commit settings edit transaction");
         hasOpenEditTransaction = false;
@@ -1314,7 +1323,8 @@ bool AdminModule::handleSetModuleConfig(const meshtastic_ModuleConfig &c)
     // next PowerFSM transition. Everything else reboots, so take BLE down before the phone interferes.
     if (!hasOpenEditTransaction &&
         !IS_ONE_OF(c.which_payload_variant, meshtastic_ModuleConfig_mqtt_tag, meshtastic_ModuleConfig_serial_tag,
-                   meshtastic_ModuleConfig_statusmessage_tag, meshtastic_ModuleConfig_mesh_beacon_tag)) {
+                   meshtastic_ModuleConfig_statusmessage_tag, meshtastic_ModuleConfig_mesh_beacon_tag,
+                   meshtastic_ModuleConfig_detection_sensor_tag)) {
         disableBluetooth();
     }
 
@@ -1399,11 +1409,26 @@ bool AdminModule::handleSetModuleConfig(const meshtastic_ModuleConfig &c)
             moduleConfig.neighbor_info.update_interval = default_neighbor_info_broadcast_secs;
         }
         break;
-    case meshtastic_ModuleConfig_detection_sensor_tag:
+    case meshtastic_ModuleConfig_detection_sensor_tag: {
         LOG_INFO("Set module config: Detection Sensor");
+        const auto &sensor = c.payload_variant.detection_sensor;
+        if (!sensor.enabled && sensor.name[0] == '_' && sensor.name[1] == 't') {
+            tmesh_FeatureFlagsConfig flags = tmesh_FeatureFlagsConfig_init_zero;
+            FeatureFlags::parseLegacyName(sensor.name, sizeof(sensor.name), flags);
+            if (hasOpenEditTransaction) {
+                deferredTmeshConfig = flags;
+                hasDeferredTmeshConfig = true;
+            } else if (FeatureFlags::setConfig(*nodeDB, &flags) != tmesh_Response_Status_OK) {
+                sendWarningAndLog("Unable to save TMesh feature flags");
+                return false;
+            }
+        }
+        if (!hasOpenEditTransaction)
+            disableBluetooth();
         moduleConfig.has_detection_sensor = true;
-        moduleConfig.detection_sensor = c.payload_variant.detection_sensor;
+        moduleConfig.detection_sensor = sensor;
         break;
+    }
     case meshtastic_ModuleConfig_ambient_lighting_tag:
         LOG_INFO("Set module config: Ambient Lighting");
         moduleConfig.has_ambient_lighting = true;
@@ -1884,6 +1909,18 @@ void AdminModule::reboot(int32_t seconds)
     rebootAtMsec = (seconds < 0) ? 0 : Time::timerEndsAtMillis(seconds * 1000);
 }
 
+bool AdminModule::saveDeferredTmeshConfig()
+{
+    if (!hasDeferredTmeshConfig)
+        return true;
+    if (FeatureFlags::setConfig(*nodeDB, &deferredTmeshConfig) != tmesh_Response_Status_OK) {
+        sendWarningAndLog("Unable to save TMesh feature flags");
+        return false;
+    }
+    hasDeferredTmeshConfig = false;
+    return true;
+}
+
 // Without this, a commit that never arrives leaves the transaction open forever and every later
 // config write from any client is applied, acknowledged, and then never saved.
 void AdminModule::expireStaleEditTransaction()
@@ -1891,6 +1928,10 @@ void AdminModule::expireStaleEditTransaction()
     if (!hasOpenEditTransaction || Throttle::isWithinTimespanMs(editTransactionActivityMs, EDIT_TRANSACTION_IDLE_MS))
         return;
 
+    if (!saveDeferredTmeshConfig()) {
+        editTransactionActivityMs = millis();
+        return;
+    }
     LOG_WARN("Edit transaction abandoned for %us; committing what it applied", EDIT_TRANSACTION_IDLE_MS / 1000);
     hasOpenEditTransaction = false;
     int segments = deferredEditSegments;

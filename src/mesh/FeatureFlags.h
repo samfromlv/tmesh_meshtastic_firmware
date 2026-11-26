@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tmesh/feature_flags.pb.h"
+#include <stddef.h>
 #include <stdint.h>
 
 class NodeDB;
@@ -57,6 +58,7 @@ void resetConfig();
 bool copyConfig(tmesh_FeatureFlagsConfig &out);
 bool configAvailable();
 tmesh_Response_Status setConfig(NodeDB &db, const tmesh_FeatureFlagsConfig *config);
+void parseLegacyName(const char *name, size_t capacity, tmesh_FeatureFlagsConfig &out);
 extern const char *const configFileName;
 RestrictedRoutingConfig restrictedRoutingConfig();
 ForceNextHopConfig forceNextHopConfig();
